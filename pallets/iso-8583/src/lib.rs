@@ -106,6 +106,9 @@ pub mod pallet {
 		) -> DispatchResult {
 			let who = T::OracleGatewayOrigin::ensure_origin(origin)?;
 
+			// do some validations
+			ensure!();
+
 			Ok(())
 		}
 	}

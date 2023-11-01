@@ -18,3 +18,9 @@ pub trait ERC20R<AccountId, Balance> {
 	/// Approve `spender` to transfer `value` tokens from `owner`
 	fn approve(&self, owner: &AccountId, spender: &AccountId, value: Balance) -> DispatchResult;
 }
+
+/// ISO-8583 interface
+pub trait ISO8583<AccountId, Balance>: ERC20R<AccountId, Balance> {
+	/// Apply a transaction
+	fn apply(&self) -> DispatchResult;
+}
