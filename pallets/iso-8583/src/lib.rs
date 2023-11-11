@@ -16,6 +16,7 @@ pub mod pallet {
 	use super::*;
 	use frame_support::{
 		pallet_prelude::{OptionQuery, ValueQuery, *},
+		sp_runtime::BoundedVec,
 		traits::ReservableCurrency,
 		Blake2_128Concat,
 	};
@@ -39,12 +40,21 @@ pub mod pallet {
 		/// Maximum transaction batch size
 		#[pallet::constant]
 		type MaxBatchSize: Get<u32>;
+		/// Maximum string size
+		#[pallet::constant]
+		type MaxStringSize: Get<u32>;
 	}
 
 	/// Stored transactions
 	#[pallet::storage]
 	#[pallet::getter(fn transactions)]
 	pub type Transactions<T> = StorageMap<_, Blake2_128Concat, Hash, TransactionOf<T>, OptionQuery>;
+
+	/// Bank account to `AccountId` mapping
+	#[pallet::storage]
+	#[pallet::getter(fn bank_accounts)]
+	pub type BankAccounts<T> =
+		StorageMap<_, Blake2_128Concat, BankAccount<T::MaxStringSize>, AccountIdOf<T>, OptionQuery>;
 
 	/// Allowances for accounts
 	#[pallet::storage]
@@ -98,16 +108,13 @@ pub mod pallet {
 		/// # Errors
 		///
 		/// - `
+		#[pallet::weight(T::DbWeight::get().writes(transactions.len() as u64))]
 		#[pallet::call_index(0)]
-		#[pallet::weight(0)]
-		pub fn settle(
+		pub fn submit_finality(
 			origin: OriginFor<T>,
-			transaction_batch: TransactionBatch<T>,
+			transactions: BoundedVec<TransactionOf<T>, T::MaxBatchSize>,
 		) -> DispatchResult {
-			let who = T::OracleGatewayOrigin::ensure_origin(origin)?;
-
-			// do some validations
-			ensure!();
+			let _ = ensure_signed(origin)?;
 
 			Ok(())
 		}

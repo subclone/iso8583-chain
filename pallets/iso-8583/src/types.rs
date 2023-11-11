@@ -3,7 +3,7 @@
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::{sp_runtime::BoundedVec, traits::Currency};
 use scale_info::TypeInfo;
-use sp_core::RuntimeDebug;
+use sp_core::{Get, RuntimeDebug};
 
 use crate::Config;
 
@@ -36,4 +36,11 @@ pub struct Transaction<AccountId, Balance> {
 	pub to: AccountId,
 	/// Amount
 	pub amount: Balance,
+}
+
+/// Bank account type
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub struct BankAccount<MaxStringSize: Get<u32>> {
+	/// Card number
+	pub card_number: BoundedVec<u8, MaxStringSize>,
 }

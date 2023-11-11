@@ -53,5 +53,7 @@ impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 }
 
 impl<T: Config> traits::ISO8583<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
-	fn apply(&self) -> DispatchResult {}
+	fn apply(&self) -> DispatchResult {
+		Ok(())
+	}
 }
