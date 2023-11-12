@@ -272,7 +272,8 @@ construct_runtime!(
 		Timestamp: pallet_timestamp,
 		Aura: pallet_aura,
 		Grandpa: pallet_grandpa,
-		Balances: pallet_balances,
+		/// We don't allow any extrinsics for balances pallet.
+		Balances: pallet_balances::{Pallet, Storage, Config<T>, Event<T>},
 		TransactionPayment: pallet_transaction_payment,
 		Sudo: pallet_sudo,
 	}
