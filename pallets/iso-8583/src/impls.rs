@@ -1,12 +1,10 @@
 //! Implementations for the pallet.
 use super::*;
-use crate::traits::{ERC20R, ISO8583};
+use crate::traits::ERC20R;
 use frame_support::{
 	ensure,
 	pallet_prelude::DispatchResult,
-	sp_runtime::traits::AccountIdConversion,
 	traits::tokens::{currency::Currency, ExistenceRequirement},
-	PalletId,
 };
 
 impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
@@ -20,10 +18,9 @@ impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 		to: &AccountIdOf<T>,
 		value: BalanceOf<T>,
 	) -> DispatchResult {
-		if PalletId(*b"oracleee").into_account_truncating() == spender {
-			// Transfer tokens
+		// Pallet account has unlimited allowance for all accounts
+		if &T::PalletAccount::get() == spender {
 			<CurrencyOf<T>>::transfer(&from, &to, value, ExistenceRequirement::KeepAlive)?;
-
 			Ok(())
 		} else {
 			Allowances::<T>::try_mutate_exists(
@@ -55,12 +52,6 @@ impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 		value: BalanceOf<T>,
 	) -> DispatchResult {
 		Allowances::<T>::insert(owner, spender, value);
-		Ok(())
-	}
-}
-
-impl<T: Config> ISO8583<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
-	fn apply() -> DispatchResult {
 		Ok(())
 	}
 }

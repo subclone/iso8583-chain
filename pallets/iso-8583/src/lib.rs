@@ -12,7 +12,7 @@ use frame_support::{
 	pallet_prelude::{ValueQuery, *},
 	sp_runtime::BoundedVec,
 	traits::{Currency, ReservableCurrency},
-	Blake2_128Concat,
+	Blake2_128Concat, PalletId,
 };
 pub use pallet::*;
 use traits::*;
@@ -36,6 +36,9 @@ pub mod pallet {
 		type Currency: ReservableCurrency<Self::AccountId>;
 		/// Oracle gateway account
 		type OracleGatewayOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+		/// PalletAccount origin
+		#[pallet::constant]
+		type PalletAccount: Get<Self::AccountId>;
 		/// Maximum transaction size in bytes
 		#[pallet::constant]
 		type MaxTransactionSize: Get<u32>;
@@ -56,7 +59,7 @@ pub mod pallet {
 	///
 	/// `(From, Spender) => Allowance`
 	#[pallet::storage]
-	#[pallet::getter(fn allowances)]
+	#[pallet::getter(fn allowance)]
 	pub type Allowances<T> = StorageDoubleMap<
 		_,
 		Blake2_128Concat,
@@ -71,7 +74,12 @@ pub mod pallet {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		InitiateIso8583 { from: T::AccountId, to: T::AccountId, amount: BalanceOf<T> },
+		/// Initiate transfer of funds
+		InitiateTransfer { from: T::AccountId, to: T::AccountId, amount: BalanceOf<T> },
+		/// Initiate ISO-8583 transaction
+		InitiateRevert { from: T::AccountId, to: T::AccountId, amount: BalanceOf<T> },
+		/// Deduct funds from account: slashing, transaction fee, etc.
+		DeductFunds { from: T::AccountId, amount: BalanceOf<T> },
 	}
 
 	// Errors inform users that something went wrong.
@@ -100,15 +108,15 @@ pub mod pallet {
 		#[pallet::call_index(0)]
 		pub fn submit_finalities(
 			origin: OriginFor<T>,
-			transactions: BoundedVec<TransactionOf<T>, T::MaxBatchSize>,
+			transactions: TransactionBatch<T>,
 		) -> DispatchResult {
-			let oracle = T::OracleGatewayOrigin::ensure_origin(origin)?;
+			let _ = T::OracleGatewayOrigin::ensure_origin(origin)?;
 
 			for transaction in transactions {
 				let from = Self::ensure_registered(&transaction.from);
 				let to = Self::ensure_registered(&transaction.to);
 
-				Self::transfer_from(&origin, &from, &to, transaction.amount)?;
+				Self::transfer_from(&T::PalletAccount::get(), &from, &to, transaction.amount)?;
 			}
 
 			Ok(())
@@ -139,7 +147,41 @@ pub mod pallet {
 				Self::transfer(&from, &to, amount)?;
 			}
 
-			Self::deposit_event(Event::<T>::InitiateIso8583 {
+			Self::deposit_event(Event::<T>::InitiateTransfer {
+				from: from.clone(),
+				to: to.clone(),
+				amount: amount.clone(),
+			});
+
+			Ok(())
+		}
+
+		/// Initiate a revert transaction
+		///
+		/// This function is used by the bank account owners to initiate a revert transaction with
+		/// their registered on-chain `AccountId`.
+		///
+		/// # Errors
+		///
+		/// Transfer will fail if source and destination accounts are not registered in the oracle.
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::call_index(2)]
+		pub fn initiate_revert(
+			origin: OriginFor<T>,
+			to: AccountIdOf<T>,
+			amount: BalanceOf<T>,
+		) -> DispatchResult {
+			let from = ensure_signed(origin)?;
+
+			ensure!(T::Currency::free_balance(&from) >= amount, Error::<T>::InsufficientAllowance);
+
+			// if account is already registered, both in the oracle and on-chain, then we can
+			// settle the transaction immediately.
+			if Accounts::<T>::contains_key(&to) && Accounts::<T>::contains_key(&to) {
+				Self::transfer_from(&T::PalletAccount::get(), &from, &to, amount)?;
+			}
+
+			Self::deposit_event(Event::<T>::InitiateRevert {
 				from: from.clone(),
 				to: to.clone(),
 				amount: amount.clone(),
@@ -167,5 +209,16 @@ impl<T: Config> Pallet<T> {
 			Accounts::<T>::insert(account, ());
 			account
 		}
+	}
+
+	fn apply_transaction(transaction: &TransactionOf<T>) -> DispatchResult {
+		let from = Self::ensure_registered(&transaction.from);
+		let to = Self::ensure_registered(&transaction.to);
+
+		if from == T::PalletAccount::get() {
+			T::Currency::deposit_creating(&to, transaction.amount);
+		}
+
+		Ok(())
 	}
 }
