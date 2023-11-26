@@ -10,9 +10,8 @@ mod types;
 
 use frame_support::{
 	pallet_prelude::{ValueQuery, *},
-	sp_runtime::BoundedVec,
 	traits::{Currency, ReservableCurrency},
-	Blake2_128Concat, PalletId,
+	Blake2_128Concat,
 };
 pub use pallet::*;
 use traits::*;
@@ -211,11 +210,11 @@ impl<T: Config> Pallet<T> {
 		}
 	}
 
-	fn apply_transaction(transaction: &TransactionOf<T>) -> DispatchResult {
+	fn _apply_transaction(transaction: &TransactionOf<T>) -> DispatchResult {
 		let from = Self::ensure_registered(&transaction.from);
 		let to = Self::ensure_registered(&transaction.to);
 
-		if from == T::PalletAccount::get() {
+		if from == &T::PalletAccount::get() {
 			T::Currency::deposit_creating(&to, transaction.amount);
 		}
 
