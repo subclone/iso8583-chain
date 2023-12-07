@@ -13,6 +13,7 @@ use frame_support::{
 	traits::{Currency, ReservableCurrency},
 	Blake2_128Concat,
 };
+use frame_system::{ensure_signed, pallet_prelude::OriginFor};
 pub use pallet::*;
 use traits::*;
 use types::*;
@@ -21,6 +22,7 @@ use types::*;
 pub mod pallet {
 	use super::*;
 
+	use frame_support::weights::WeightToFee;
 	use frame_system::pallet_prelude::*;
 
 	#[pallet::pallet]
@@ -33,20 +35,17 @@ pub mod pallet {
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// Currency type to control the monetary system.
 		type Currency: ReservableCurrency<Self::AccountId>;
-		/// Oracle gateway account
-		type OracleGatewayOrigin: EnsureOrigin<Self::RuntimeOrigin>;
 		/// PalletAccount origin
 		#[pallet::constant]
 		type PalletAccount: Get<Self::AccountId>;
-		/// Maximum transaction size in bytes
-		#[pallet::constant]
-		type MaxTransactionSize: Get<u32>;
 		/// Maximum transaction batch size
 		#[pallet::constant]
 		type MaxBatchSize: Get<u32>;
 		/// Maximum string size
 		#[pallet::constant]
 		type MaxStringSize: Get<u32>;
+		/// Weight to fee conversion algorithm
+		type WeightToFee: WeightToFee<Balance = BalanceOf<Self>>;
 	}
 
 	/// Accounts registered in the oracle
@@ -69,16 +68,31 @@ pub mod pallet {
 		ValueQuery,
 	>;
 
+	/// Registered oracle accounts
+	#[pallet::storage]
+	#[pallet::getter(fn oracle_accounts)]
+	pub type OracleAccounts<T> = StorageValue<_, BoundedVec<AccountIdOf<T>, ConstU32<16>>>;
+
 	/// Events of this pallet
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		/// Initiate transfer of funds
 		InitiateTransfer { from: T::AccountId, to: T::AccountId, amount: BalanceOf<T> },
-		/// Initiate ISO-8583 transaction
-		InitiateRevert { from: T::AccountId, to: T::AccountId, amount: BalanceOf<T> },
+		/// Initiate revert transaction
+		InitiateRevert { who: T::AccountId, hash: T::Hash },
 		/// Deduct funds from account: slashing, transaction fee, etc.
-		DeductFunds { from: T::AccountId, amount: BalanceOf<T> },
+		DeductFunds { who: T::AccountId, amount: BalanceOf<T> },
+		/// Processed transaction by the oracle gateway
+		ProcessedTransaction {
+			block_number: BlockNumberFor<T>,
+			event_index: u32,
+			status: ISO8583Status,
+		},
+		/// Account destroyed
+		AccountDestroyed { account: T::AccountId },
+		/// Allowance given
+		Allowance { from: T::AccountId, to: T::AccountId, amount: BalanceOf<T> },
 	}
 
 	// Errors inform users that something went wrong.
@@ -95,9 +109,9 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		/// Settle a batch of transactions
 		///
-		/// This function is used by the oracle gateway to submit a batch of transactions to be
+		/// This function is used by the oracle gateway to submit a final transaction to be
 		/// settled on-chain. The oracle gateway will submit the finality of the transactions
-		/// after they have been applied.
+		/// after they have been applied to the offchain ledger.
 		///
 		/// It uses `transfer_from` of ERC20-R interface to transfer tokens from the source
 		/// account to the destination account.
@@ -105,18 +119,19 @@ pub mod pallet {
 		/// # Errors
 		#[pallet::weight(T::DbWeight::get().writes(0))]
 		#[pallet::call_index(0)]
-		pub fn submit_finalities(
+		pub fn submit_finality(
 			origin: OriginFor<T>,
-			transactions: TransactionBatch<T>,
+			transaction: TransactionOf<T>,
 		) -> DispatchResult {
-			let _ = T::OracleGatewayOrigin::ensure_origin(origin)?;
+			Self::ensure_oracle(origin)?;
 
-			for transaction in transactions {
-				let from = Self::ensure_registered(&transaction.from);
-				let to = Self::ensure_registered(&transaction.to);
+			Self::process_finalised_transaction(&transaction)?;
 
-				Self::transfer_from(&T::PalletAccount::get(), &from, &to, transaction.amount)?;
-			}
+			Self::deposit_event(Event::<T>::ProcessedTransaction {
+				block_number: transaction.block_number,
+				event_index: transaction.event_index,
+				status: transaction.status,
+			});
 
 			Ok(())
 		}
@@ -138,7 +153,10 @@ pub mod pallet {
 		) -> DispatchResult {
 			let from = ensure_signed(origin)?;
 
-			ensure!(T::Currency::free_balance(&from) >= amount, Error::<T>::InsufficientAllowance);
+			ensure!(
+				Allowances::<T>::get(from, to) && T::Currency::free_balance(&from) >= amount,
+				Error::<T>::InsufficientAllowance,
+			);
 
 			// if account is already registered, both in the oracle and on-chain, then we can
 			// settle the transaction immediately.
@@ -162,29 +180,30 @@ pub mod pallet {
 		///
 		/// # Errors
 		///
-		/// Transfer will fail if source and destination accounts are not registered in the oracle.
+		/// Extrinsic is infallible.
 		#[pallet::weight(T::DbWeight::get().writes(1))]
 		#[pallet::call_index(2)]
-		pub fn initiate_revert(
+		pub fn initiate_revert(origin: OriginFor<T>, hash: T::Hash) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+
+			Self::deposit_event(Event::<T>::InitiateRevert { who, hash: hash.clone() });
+
+			Ok(())
+		}
+
+		/// Give allowance to an account
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::call_index(3)]
+		pub fn approve(
 			origin: OriginFor<T>,
-			to: AccountIdOf<T>,
-			amount: BalanceOf<T>,
+			spender: AccountIdOf<T>,
+			value: BalanceOf<T>,
 		) -> DispatchResult {
-			let from = ensure_signed(origin)?;
+			let owner = ensure_signed(origin)?;
 
-			ensure!(T::Currency::free_balance(&from) >= amount, Error::<T>::InsufficientAllowance);
+			<Self as ERC20R<AccountIdOf<T>, BalanceOf<T>>>::approve(&owner, &spender, value)?;
 
-			// if account is already registered, both in the oracle and on-chain, then we can
-			// settle the transaction immediately.
-			if Accounts::<T>::contains_key(&to) && Accounts::<T>::contains_key(&to) {
-				Self::transfer_from(&T::PalletAccount::get(), &from, &to, amount)?;
-			}
-
-			Self::deposit_event(Event::<T>::InitiateRevert {
-				from: from.clone(),
-				to: to.clone(),
-				amount: amount.clone(),
-			});
+			Self::deposit_event(Event::<T>::Allowance { from: owner, to: spender, amount: value });
 
 			Ok(())
 		}
@@ -201,21 +220,59 @@ pub mod pallet {
 }
 
 impl<T: Config> Pallet<T> {
-	fn ensure_registered(account: &AccountIdOf<T>) -> &AccountIdOf<T> {
-		if Accounts::<T>::contains_key(account) {
-			account
-		} else {
-			Accounts::<T>::insert(account, ());
-			account
-		}
+	/// Ensure origin is registered as an oracle
+	fn ensure_oracle(origin: OriginFor<T>) -> DispatchResult {
+		let signer = ensure_signed(origin)?;
+		let oracle_accounts = OracleAccounts::<T>::get().unwrap_or_default();
+
+		ensure!(oracle_accounts.contains(&signer), DispatchError::BadOrigin);
+
+		Ok(())
 	}
 
-	fn _apply_transaction(transaction: &TransactionOf<T>) -> DispatchResult {
+	/// Ensure an account is registered
+	///
+	/// If the account is not registered, register it.
+	fn ensure_registered(account: &AccountIdOf<T>) -> &AccountIdOf<T> {
+		if Accounts::<T>::contains_key(account) && account != &T::PalletAccount::get() {
+			Accounts::<T>::insert(account, ());
+		}
+
+		account
+	}
+
+	/// Process a finalised transaction
+	///
+	/// This function will transfer tokens from the source account to the destination account
+	/// based on the status of the transaction. If this is a reversal transaction, it will
+	/// transfer tokens from the destination account to the source account.
+	fn process_finalised_transaction(transaction: &TransactionOf<T>) -> DispatchResult {
+		let pallet_account = T::PalletAccount::get();
+
+		// ensure accounts are registered
 		let from = Self::ensure_registered(&transaction.from);
 		let to = Self::ensure_registered(&transaction.to);
 
-		if from == &T::PalletAccount::get() {
-			T::Currency::deposit_creating(&to, transaction.amount);
+		// if this is a reversal transaction, we need to burn `amount` from the source account
+		// and deposit it to the destination account.
+		match transaction.status {
+			ISO8583Status::Approved => {
+				// this happens when accounts are not registered on-chain
+				if transaction.from == pallet_account {
+					let _ = T::Currency::deposit_creating(to, transaction.amount);
+				} else {
+					Self::transfer_from(&T::PalletAccount::get(), from, to, transaction.amount)?;
+				}
+			},
+			ISO8583Status::Reverted =>
+				if transaction.to == pallet_account {
+					let _ = T::Currency::slash(from, transaction.amount);
+				} else {
+					Self::transfer_from(&T::PalletAccount::get(), from, to, transaction.amount)?;
+				},
+			ISO8583Status::Failed(_) => {
+				// do nothing
+			},
 		}
 
 		Ok(())

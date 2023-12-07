@@ -1,17 +1,15 @@
 //! Types used in this pallet.
 
 use codec::{Decode, Encode, MaxEncodedLen};
-use frame_support::{sp_runtime::BoundedVec, traits::Currency};
+use frame_support::traits::Currency;
+use frame_system::pallet_prelude::BlockNumberFor;
 use scale_info::TypeInfo;
-use sp_core::{Get, RuntimeDebug};
+use sp_core::RuntimeDebug;
 
 use crate::Config;
 
 /// Hash used for transaction ID.
 pub type Hash = sp_core::H256;
-
-/// Batch of transactions
-pub type TransactionBatch<T> = BoundedVec<TransactionOf<T>, <T as Config>::MaxBatchSize>;
 
 /// Explicit `AccountId`
 pub type AccountIdOf<T> = <T as frame_system::Config>::AccountId;
@@ -23,11 +21,14 @@ pub type CurrencyOf<T> = <T as Config>::Currency;
 pub type BalanceOf<T> = <<T as Config>::Currency as Currency<AccountIdOf<T>>>::Balance;
 
 /// Explicit `Transaction`
-pub type TransactionOf<T> = Transaction<AccountIdOf<T>, BalanceOf<T>>;
+pub type TransactionOf<T> = Transaction<AccountIdOf<T>, BalanceOf<T>, BlockNumberFor<T>>;
 
 /// Basic transaction type
+///
+/// Block number and event index serve as a unique identifier of a transaction. They highlight
+/// the block and event index where this transaction was triggered by the oracle gateway.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
-pub struct Transaction<AccountId, Balance> {
+pub struct Transaction<AccountId, Balance, BlockNumber> {
 	/// Transaction ID
 	pub id: Hash,
 	/// Sender
@@ -36,11 +37,38 @@ pub struct Transaction<AccountId, Balance> {
 	pub to: AccountId,
 	/// Amount
 	pub amount: Balance,
+	/// Block number
+	pub block_number: BlockNumber,
+	/// Event index
+	pub event_index: u32,
+	/// Status of the transaction
+	pub status: ISO8583Status,
 }
 
-/// Bank account type
+/// ISO-8583 transaction status
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
-pub struct BankAccount<MaxStringSize: Get<u32>> {
-	/// Card number
-	pub card_number: BoundedVec<u8, MaxStringSize>,
+pub enum ISO8583Status {
+	/// Transaction is finalised
+	Approved,
+	/// Transaction is reverted
+	Reverted,
+	/// Failed
+	Failed(ISO8583FailureReason),
+}
+
+/// Reason for failure of ISO-8583 transaction
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub enum ISO8583FailureReason {
+	/// Insufficient funds
+	InsufficientFunds,
+	/// Invalid transaction
+	InvalidTransaction,
+	/// Invalid PAN
+	InvalidCardNumber,
+	/// Expired card
+	ExpiredCard,
+	/// Do not honor
+	DoNotHonor,
+	/// Other
+	Other,
 }
