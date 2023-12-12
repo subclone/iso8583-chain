@@ -2,9 +2,9 @@
 
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::traits::Currency;
-use frame_system::pallet_prelude::BlockNumberFor;
 use scale_info::TypeInfo;
-use sp_core::RuntimeDebug;
+use sp_core::{ConstU32, RuntimeDebug};
+use sp_runtime::BoundedVec;
 
 use crate::Config;
 
@@ -21,26 +21,27 @@ pub type CurrencyOf<T> = <T as Config>::Currency;
 pub type BalanceOf<T> = <<T as Config>::Currency as Currency<AccountIdOf<T>>>::Balance;
 
 /// Explicit `Transaction`
-pub type TransactionOf<T> = Transaction<AccountIdOf<T>, BalanceOf<T>, BlockNumberFor<T>>;
+pub type FinalisedTransactionOf<T> = FinalisedTransaction<AccountIdOf<T>, BalanceOf<T>>;
+
+/// Event ID: `block_number` - `event_index`
+pub type EventId = BoundedVec<u8, ConstU32<16>>;
 
 /// Basic transaction type
 ///
 /// Block number and event index serve as a unique identifier of a transaction. They highlight
 /// the block and event index where this transaction was triggered by the oracle gateway.
 #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
-pub struct Transaction<AccountId, Balance, BlockNumber> {
+pub struct FinalisedTransaction<AccountId, Balance> {
 	/// Transaction ID
-	pub id: Hash,
+	pub hash: Hash,
 	/// Sender
 	pub from: AccountId,
 	/// Receiver
 	pub to: AccountId,
 	/// Amount
 	pub amount: Balance,
-	/// Block number
-	pub block_number: BlockNumber,
-	/// Event index
-	pub event_index: u32,
+	/// Event ID
+	pub event_id: EventId,
 	/// Status of the transaction
 	pub status: ISO8583Status,
 }

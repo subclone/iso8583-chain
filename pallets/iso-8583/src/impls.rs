@@ -9,7 +9,7 @@ use frame_support::{
 
 impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 	fn transfer(from: &AccountIdOf<T>, to: &AccountIdOf<T>, value: BalanceOf<T>) -> DispatchResult {
-		<CurrencyOf<T>>::transfer(from, to, value, ExistenceRequirement::KeepAlive)
+		CurrencyOf::<T>::transfer(from, to, value, ExistenceRequirement::KeepAlive)
 	}
 
 	fn transfer_from(
@@ -18,9 +18,10 @@ impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 		to: &AccountIdOf<T>,
 		value: BalanceOf<T>,
 	) -> DispatchResult {
-		// Pallet account has unlimited allowance for all accounts
-		if &T::PalletAccount::get() == spender {
-			<CurrencyOf<T>>::transfer(&from, &to, value, ExistenceRequirement::KeepAlive)?;
+		// Pallet account has unlimited allowance for all accounts and transfering from self is
+		// allowed
+		if &T::PalletAccount::get() == spender || from == spender {
+			CurrencyOf::<T>::transfer(&from, &to, value, ExistenceRequirement::KeepAlive)?;
 			Ok(())
 		} else {
 			Allowances::<T>::try_mutate_exists(
@@ -32,10 +33,10 @@ impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 					ensure!(allowance >= value, Error::<T>::InsufficientAllowance);
 
 					// Transfer tokens
-					<CurrencyOf<T>>::transfer(from, to, value, ExistenceRequirement::KeepAlive)?;
+					CurrencyOf::<T>::transfer(from, to, value, ExistenceRequirement::KeepAlive)?;
 
 					// Update allowances
-					let updated_allowance = allowance - value;
+					let updated_allowance = allowance.saturating_sub(value);
 					*maybe_allowance = Some(updated_allowance);
 
 					Ok(())

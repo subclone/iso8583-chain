@@ -22,6 +22,8 @@ sp-runtime = { workspace = true }
 [dev-dependencies]
 sp-io = { workspace = true }
 sp-runtime = { workspace = true }
+pallet-balances = { workspace = true, features = ["std", "insecure_zero_ed"] }
+pallet-timestamp = { workspace = true }
 
 [features]
 default = ["std"]

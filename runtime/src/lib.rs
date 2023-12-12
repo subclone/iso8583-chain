@@ -252,12 +252,14 @@ parameter_types! {
 	pub FeeMultiplier: Multiplier = Multiplier::one();
 }
 
+type WeightToFee = IdentityFee<Balance>;
+
 impl pallet_transaction_payment::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type OnChargeTransaction = CurrencyAdapter<Balances, ()>;
 	type OperationalFeeMultiplier = ConstU8<5>;
-	type WeightToFee = IdentityFee<Balance>;
-	type LengthToFee = IdentityFee<Balance>;
+	type WeightToFee = WeightToFee;
+	type LengthToFee = WeightToFee;
 	type FeeMultiplierUpdate = ConstFeeMultiplier<FeeMultiplier>;
 }
 
@@ -276,8 +278,8 @@ impl pallet_iso_8583::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type PalletAccount = PalletAccount;
-	type MaxBatchSize = ConstU32<32>;
 	type MaxStringSize = ConstU32<1024>;
+	type WeightToFee = WeightToFee;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
