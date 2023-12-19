@@ -191,7 +191,7 @@ pub mod pallet {
 		/// # Errors
 		///
 		/// Extrinsic is infallible.
-		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::weight(T::DbWeight::get().writes(0))]
 		#[pallet::call_index(2)]
 		pub fn initiate_revert(origin: OriginFor<T>, hash: T::Hash) -> DispatchResult {
 			let who = ensure_signed(origin)?;
@@ -202,6 +202,8 @@ pub mod pallet {
 		}
 
 		/// Give allowance to an account
+		///
+		/// Any account can give allowance to any other account.
 		#[pallet::weight(T::DbWeight::get().writes(1))]
 		#[pallet::call_index(3)]
 		pub fn approve(
@@ -225,6 +227,8 @@ pub mod pallet {
 		}
 
 		/// Register an account
+		///
+		/// This function is used by the oracle gateway to register an account.
 		#[pallet::weight(T::DbWeight::get().writes(1))]
 		#[pallet::call_index(4)]
 		pub fn register(
