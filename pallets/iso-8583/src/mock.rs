@@ -108,14 +108,18 @@ impl ExtBuilder {
 		let mut t = frame_system::GenesisConfig::<Test>::default().build_storage().unwrap();
 
 		crate::GenesisConfig::<Test> {
-			oracle_accounts: self.oracle_accounts,
+			oracle_accounts: self.oracle_accounts.clone(),
 			accounts: self.accounts.clone(),
 		}
 		.assimilate_storage(&mut t)
 		.unwrap();
 
+		let mut endowed_accounts = self.accounts.clone();
+
+		endowed_accounts.append(&mut self.oracle_accounts.clone());
+
 		pallet_balances::GenesisConfig::<Test> {
-			balances: self.accounts.iter().map(|x| (*x, INITIAL_BALANCE)).collect(),
+			balances: endowed_accounts.iter().map(|x| (*x, INITIAL_BALANCE)).collect(),
 		}
 		.assimilate_storage(&mut t)
 		.unwrap();
