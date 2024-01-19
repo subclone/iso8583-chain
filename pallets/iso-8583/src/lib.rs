@@ -93,6 +93,8 @@ pub mod pallet {
 		AccountRegistered { account: T::AccountId, initial_balance: BalanceOf<T> },
 		/// Allowance given
 		Allowance { from: T::AccountId, to: T::AccountId, amount: BalanceOf<T> },
+		/// Account removed
+		AccountRemoved { account: T::AccountId },
 	}
 
 	// Errors inform users that something went wrong.
@@ -156,6 +158,7 @@ pub mod pallet {
 			amount: BalanceOf<T>,
 		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
+
 			ensure!(Accounts::<T>::contains_key(&from), Error::<T>::SourceNotRegistered);
 			ensure!(T::Currency::free_balance(&from) >= amount, Error::<T>::InsufficientAllowance);
 
@@ -244,6 +247,22 @@ pub mod pallet {
 			let _ = T::Currency::deposit_creating(&account, amount);
 
 			Self::deposit_event(Event::<T>::AccountRegistered { account, initial_balance: amount });
+
+			Ok(())
+		}
+
+		/// Remove an account
+		///
+		/// This function is used by the oracle gateway to remove an account. Oracle can remove
+		/// accounts that are not honest or have been compromised.
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::call_index(5)]
+		pub fn remove(origin: OriginFor<T>, account: AccountIdOf<T>) -> DispatchResult {
+			Self::ensure_oracle(origin)?;
+
+			Accounts::<T>::remove(&account);
+
+			Self::deposit_event(Event::<T>::AccountRemoved { account });
 
 			Ok(())
 		}

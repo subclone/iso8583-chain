@@ -231,6 +231,20 @@ mod extrinsics {
 				));
 			});
 	}
+
+	#[test]
+	fn test_remove_works() {
+		ExtBuilder::default().with_oracle_accounts(vec![1]).build().execute_with(|| {
+			// set block to 1, to read events
+			System::set_block_number(1);
+
+			// only oracle can remove
+			assert_noop!(ISO8583::remove(RuntimeOrigin::signed(1234), 1), DispatchError::BadOrigin);
+
+			// remove oracle
+			assert_ok!(ISO8583::remove(RuntimeOrigin::signed(1), 1));
+		});
+	}
 }
 
 mod trait_tests {
@@ -258,6 +272,33 @@ mod trait_tests {
 			assert_event_emitted(RuntimeEvent::Balances(
 				pallet_balances::Event::<Test>::Transfer { from: 3, to: 4, amount: 20 },
 			));
+		});
+	}
+
+	#[test]
+	fn test_approve_works() {
+		ExtBuilder::default().with_accounts(vec![3, 4]).build().execute_with(|| {
+			// set block to 1, to read events
+			System::set_block_number(1);
+
+			// give allowance from 3 to 4
+			assert_ok!(ISO8583::approve(RuntimeOrigin::signed(3), 4, 50));
+
+			// event is emitted
+			assert_event_emitted(RuntimeEvent::ISO8583(crate::Event::<Test>::Allowance {
+				from: 3,
+				to: 4,
+				amount: 50,
+			}));
+
+			// 4 can now spend 25 from 3
+			assert_ok!(ISO8583::transfer_from(&4, &3, &10, 25));
+
+			// try sending without allowance
+			assert_noop!(
+				ISO8583::transfer_from(&3, &4, &10, 26),
+				Error::<Test>::InsufficientAllowance,
+			);
 		});
 	}
 
