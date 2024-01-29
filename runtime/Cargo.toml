@@ -1,7 +1,7 @@
 [package]
 name = "iso-8583-runtime"
 version = "0.1.0"
-description = "Template node for ISO-8583 demo"
+description = "Template runtime for ISO-8583 demo"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

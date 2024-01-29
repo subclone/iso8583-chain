@@ -29,7 +29,7 @@ pallet-timestamp = { workspace = true }
 default = ["std"]
 std = [
 	"codec/std",
-	"frame-benchmarking?/std",
+	"frame-benchmarking",
 	"frame-support/std",
 	"frame-system/std",
 	"scale-info/std",

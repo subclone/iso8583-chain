@@ -9,11 +9,15 @@ mod traits;
 mod types;
 
 use frame_support::{
+	dispatch::Vec,
 	pallet_prelude::{ValueQuery, *},
 	traits::{BuildGenesisConfig, Currency, ReservableCurrency},
 };
 use frame_system::{ensure_signed, pallet_prelude::OriginFor};
 use sp_runtime::Saturating;
+
+use frame_support::weights::WeightToFee;
+use frame_system::pallet_prelude::*;
 
 pub use pallet::*;
 use traits::*;
@@ -27,9 +31,6 @@ mod tests;
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
-
-	use frame_support::weights::WeightToFee;
-	use frame_system::pallet_prelude::*;
 
 	#[pallet::pallet]
 	pub struct Pallet<T>(_);
@@ -277,8 +278,8 @@ pub mod pallet {
 		fn offchain_worker(_now: BlockNumberFor<T>) {}
 	}
 
-	#[derive(frame_support::DefaultNoBound)]
 	#[pallet::genesis_config]
+	#[derive(frame_support::DefaultNoBound)]
 	pub struct GenesisConfig<T: Config> {
 		pub oracle_accounts: Vec<AccountIdOf<T>>,
 		pub accounts: Vec<AccountIdOf<T>>,
