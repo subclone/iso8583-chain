@@ -7,11 +7,6 @@ use sp_runtime::DispatchError;
 
 use crate::{mock::*, types::FinalisedTransaction, Error};
 
-/// Assert a certain event is emitted by the runtime
-fn assert_event_emitted(event: RuntimeEvent) {
-	assert!(System::events().iter().any(|r| r.event == event));
-}
-
 mod extrinsics {
 	use super::*;
 
@@ -63,7 +58,7 @@ mod extrinsics {
 				assert_eq!(Balances::reserved_balance(3), 100);
 
 				// event is emitted
-				assert_event_emitted(RuntimeEvent::ISO8583(
+				System::assert_has_event(RuntimeEvent::ISO8583(
 					crate::Event::<Test>::InitiateTransfer { from: 3, to: 10, amount: 100 },
 				));
 			});
@@ -86,7 +81,7 @@ mod extrinsics {
 				assert_ok!(ISO8583::approve(RuntimeOrigin::signed(3), 10, 50));
 
 				// event is emitted
-				assert_event_emitted(RuntimeEvent::ISO8583(crate::Event::<Test>::Allowance {
+				System::assert_has_event(RuntimeEvent::ISO8583(crate::Event::<Test>::Allowance {
 					from: 3,
 					to: 10,
 					amount: 50,
@@ -124,10 +119,9 @@ mod extrinsics {
 				assert_ok!(ISO8583::initiate_revert(RuntimeOrigin::signed(1), dummy_hash));
 
 				// event is emitted
-				assert_event_emitted(RuntimeEvent::ISO8583(crate::Event::<Test>::InitiateRevert {
-					who: 1,
-					hash: dummy_hash,
-				}));
+				System::assert_has_event(RuntimeEvent::ISO8583(
+					crate::Event::<Test>::InitiateRevert { who: 1, hash: dummy_hash },
+				));
 			});
 	}
 
@@ -177,7 +171,7 @@ mod extrinsics {
 				));
 
 				// event is emitted
-				assert_event_emitted(RuntimeEvent::ISO8583(
+				System::assert_has_event(RuntimeEvent::ISO8583(
 					crate::Event::<Test>::ProcessedTransaction {
 						event_id: finalised_transaction_mint.event_id,
 						status: finalised_transaction_mint.status,
@@ -188,7 +182,7 @@ mod extrinsics {
 				assert_eq!(Balances::free_balance(4), INITIAL_BALANCE + 20);
 
 				// mint event is emitted
-				assert_event_emitted(RuntimeEvent::Balances(
+				System::assert_has_event(RuntimeEvent::Balances(
 					pallet_balances::Event::<Test>::Deposit { who: 4, amount: 20 },
 				));
 
@@ -215,7 +209,7 @@ mod extrinsics {
 				));
 
 				// event is emitted
-				assert_event_emitted(RuntimeEvent::ISO8583(
+				System::assert_has_event(RuntimeEvent::ISO8583(
 					crate::Event::<Test>::ProcessedTransaction {
 						event_id: finalised_transaction_transfer.event_id.clone(),
 						status: finalised_transaction_transfer.status.clone(),
@@ -226,7 +220,7 @@ mod extrinsics {
 				assert_eq!(Balances::free_balance(5), INITIAL_BALANCE + 23);
 
 				// transfer event is emitted
-				assert_event_emitted(RuntimeEvent::Balances(
+				System::assert_has_event(RuntimeEvent::Balances(
 					pallet_balances::Event::<Test>::Transfer { from: 3, to: 5, amount: 23 },
 				));
 			});
@@ -269,7 +263,7 @@ mod trait_tests {
 			assert_ok!(ISO8583::transfer(&3, &4, 20));
 
 			// event is emitted
-			assert_event_emitted(RuntimeEvent::Balances(
+			System::assert_has_event(RuntimeEvent::Balances(
 				pallet_balances::Event::<Test>::Transfer { from: 3, to: 4, amount: 20 },
 			));
 		});
@@ -285,7 +279,7 @@ mod trait_tests {
 			assert_ok!(ISO8583::approve(RuntimeOrigin::signed(3), 4, 50));
 
 			// event is emitted
-			assert_event_emitted(RuntimeEvent::ISO8583(crate::Event::<Test>::Allowance {
+			System::assert_has_event(RuntimeEvent::ISO8583(crate::Event::<Test>::Allowance {
 				from: 3,
 				to: 4,
 				amount: 50,
@@ -333,7 +327,7 @@ mod trait_tests {
 			);
 
 			// event is emitted
-			assert_event_emitted(RuntimeEvent::Balances(
+			System::assert_has_event(RuntimeEvent::Balances(
 				pallet_balances::Event::<Test>::Transfer { from: 4, to: 10, amount: 25 },
 			));
 		});
