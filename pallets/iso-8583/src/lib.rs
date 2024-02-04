@@ -11,25 +11,79 @@ mod types;
 use frame_support::{
 	dispatch::Vec,
 	pallet_prelude::{ValueQuery, *},
-	traits::{BuildGenesisConfig, Currency, ReservableCurrency},
+	traits::{BuildGenesisConfig, Currency, PalletInfoAccess, ReservableCurrency},
 };
-use frame_system::{ensure_signed, pallet_prelude::OriginFor};
-use sp_runtime::Saturating;
+use frame_system::{
+	ensure_signed,
+	offchain::{SendSignedTransaction, Signer},
+	pallet_prelude::OriginFor,
+};
+use sp_runtime::{offchain::http, traits::TryConvert, KeyTypeId, Saturating};
 
-use frame_support::weights::WeightToFee;
-use frame_system::pallet_prelude::*;
+use frame_support::{storage::unhashed, weights::WeightToFee};
+use frame_system::{offchain::CreateSignedTransaction, pallet_prelude::*};
+use lite_json::{parse_json, JsonValue, Serialize};
 
 pub use pallet::*;
 use traits::*;
 use types::*;
+
+use crate::impls::{AccountIdDecoder, BalanceDecoder};
 
 #[cfg(test)]
 mod mock;
 #[cfg(test)]
 mod tests;
 
+/// Defines application identifier for crypto keys of this module.
+///
+/// Every module that deals with signatures needs to declare its unique identifier for
+/// its crypto keys.
+/// When offchain worker is signing transactions it's going to request keys of type
+/// `KeyTypeId` from the keystore and use the ones it finds to sign the transaction.
+/// The keys can be inserted manually via RPC (see `author_insertKey`).
+pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"iso8");
+
+/// Based on the above `KeyTypeId` we need to generate a pallet-specific crypto type wrappers.
+/// We can use from supported crypto kinds (`sr25519`, `ed25519` and `ecdsa`) and augment
+/// the types with this pallet-specific identifier.
+pub mod crypto {
+	use super::KEY_TYPE;
+	use sp_core::sr25519::Signature as Sr25519Signature;
+	use sp_runtime::{
+		app_crypto::{app_crypto, sr25519},
+		traits::Verify,
+		MultiSignature, MultiSigner,
+	};
+	app_crypto!(sr25519, KEY_TYPE);
+
+	pub struct TestAuthId;
+
+	impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for TestAuthId {
+		type RuntimeAppPublic = Public;
+		type GenericSignature = sp_core::sr25519::Signature;
+		type GenericPublic = sp_core::sr25519::Public;
+	}
+
+	// implemented for mock runtime in test
+	impl frame_system::offchain::AppCrypto<<Sr25519Signature as Verify>::Signer, Sr25519Signature>
+		for TestAuthId
+	{
+		type RuntimeAppPublic = Public;
+		type GenericSignature = sp_core::sr25519::Signature;
+		type GenericPublic = sp_core::sr25519::Public;
+	}
+}
+
+/// List of accounts, bound is arbitrary, enough for our use case.
+type AccountsOf<T> = BoundedVec<(AccountIdOf<T>, BalanceOf<T>), ConstU32<30>>;
+
+/// Storage key as a bounded vector. The bound is arbitrary, enough for our use case.
+type StorageKey = BoundedVec<u8, ConstU32<128>>;
+
 #[frame_support::pallet]
 pub mod pallet {
+
 	use super::*;
 
 	#[pallet::pallet]
@@ -37,7 +91,9 @@ pub mod pallet {
 
 	/// Pallet configuration
 	#[pallet::config]
-	pub trait Config: frame_system::Config {
+	pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config {
+		/// The identifier type for an offchain worker.
+		type AuthorityId: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>;
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// Currency type to control the monetary system.
@@ -76,6 +132,16 @@ pub mod pallet {
 	#[pallet::storage]
 	#[pallet::getter(fn oracle_accounts)]
 	pub type OracleAccounts<T> = StorageMap<_, Blake2_128Concat, AccountIdOf<T>, ()>;
+
+	/// Last queried storage key for offchain worker
+	/// Offchain worker iterates through all the registered accounts, queries their balances
+	/// and updates updates the on-chain balances if they are out of sync.
+	///
+	/// Since we can not do unlimited iterations in offchain worker, we need to keep track of
+	/// the last iterated storage key.
+	#[pallet::storage]
+	#[pallet::getter(fn last_storage_key)]
+	pub type LastIteratedStorageKey<T: Config> = StorageValue<_, StorageKey, OptionQuery>;
 
 	/// Events of this pallet
 	#[pallet::event]
@@ -267,15 +333,82 @@ pub mod pallet {
 
 			Ok(())
 		}
+
+		/// Submit updated balances
+		///
+		/// This function is used by the offchain worker to submit updated balances to the chain.
+		#[pallet::weight(T::DbWeight::get().writes(updated_accounts.len() as u64 + 1))]
+		#[pallet::call_index(6)]
+		pub fn update_accounts(
+			origin: OriginFor<T>,
+			updated_accounts: AccountsOf<T>,
+			last_iterated_storage_key: StorageKey,
+		) -> DispatchResult {
+			// it is an unsigned transaction
+			ensure_none(origin)?;
+
+			for (account, balance) in updated_accounts {
+				// do basic check if account is registered
+				if Accounts::<T>::contains_key(&account) {
+					T::Currency::make_free_balance_be(&account, balance);
+				}
+			}
+
+			LastIteratedStorageKey::<T>::put(last_iterated_storage_key);
+
+			Ok(())
+		}
 	}
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
 		/// Offchain worker
 		///
-		/// This function is executed by the offchain worker and is used to validate ISO-8583
-		/// messages submitted by the oracle gateway.
-		fn offchain_worker(_now: BlockNumberFor<T>) {}
+		/// Queries balances of all registered accounts and makes sure they are in sync with the
+		/// offchain ledger.
+		fn offchain_worker(_now: BlockNumberFor<T>) {
+			// get last iterated storage key
+			let prefix = storage::storage_prefix(
+				<Pallet<T> as PalletInfoAccess>::name().as_bytes(),
+				b"Accounts",
+			);
+
+			let mut previous_key = if let Some(key) = LastIteratedStorageKey::<T>::get() {
+				key.into_inner()
+			} else {
+				prefix.to_vec()
+			};
+
+			let mut count = 0;
+
+			let mut accounts = Vec::new();
+			while let Some(next) = sp_io::storage::next_key(&previous_key) {
+				previous_key = next;
+				count += 1;
+				if let Some(account) = unhashed::get::<AccountIdOf<T>>(&previous_key) {
+					accounts.push(account);
+				}
+
+				if count >= 20 {
+					break;
+				}
+			}
+
+			// if there are no accounts, early return
+			if accounts.is_empty() {
+				return;
+			}
+
+			// fetch and submit updated balances
+			match Self::fetch_and_submit_updated_balances(accounts.clone(), previous_key) {
+				Ok(_) => log::info!(
+					target: "offchain-worker",
+					"Submitted updated balances for {} accounts",
+					accounts.len(),
+				),
+				Err(e) => log::error!(target: "offchain-worker", "Failed: {:?}", e),
+			}
+		}
 	}
 
 	#[pallet::genesis_config]
@@ -362,5 +495,131 @@ impl<T: Config> Pallet<T> {
 		}
 
 		Ok(())
+	}
+}
+
+/// Functions used by offchain worker
+impl<T: Config> Pallet<T> {
+	/// Submit updated balances
+	fn fetch_and_submit_updated_balances(
+		accounts: Vec<AccountIdOf<T>>,
+		last_iterated_storage_key: Vec<u8>,
+	) -> Result<(), &'static str> {
+		// submit updated balances
+		let signer = Signer::<T, T::AuthorityId>::all_accounts();
+
+		if !signer.can_sign() {
+			return Err("No local accounts available");
+		}
+
+		let updated_accounts =
+			Self::fetch_balances(accounts).map_err(|_| "Failed to fetch balances")?;
+
+		let last_iterated_storage_key: StorageKey =
+			last_iterated_storage_key.try_into().map_err(|_| "Invalid key")?;
+
+		// Actually send the extrinsic to the chain
+		let result = signer.send_signed_transaction(|_acct| Call::update_accounts {
+			updated_accounts: updated_accounts.clone(),
+			last_iterated_storage_key: last_iterated_storage_key.clone(),
+		});
+
+		for (acc, res) in &result {
+			match res {
+				Ok(()) =>
+					log::info!(target: "offchain-worker", "Submitted updated balances by: {:?}", acc.id),
+				Err(e) =>
+					log::error!(target: "offchain-worker", "Account: {:?} failed: {:?}", acc.id, e),
+			}
+		}
+
+		Ok(())
+	}
+
+	/// Fetch balances of batch accounts
+	fn fetch_balances(accounts: Vec<AccountIdOf<T>>) -> Result<AccountsOf<T>, http::Error> {
+		let deadline =
+			sp_io::offchain::timestamp().add(sp_core::offchain::Duration::from_millis(2_000));
+
+		// Body of the POST request, list of accounts
+		let body = JsonValue::Array(
+			accounts
+				.iter()
+				.map(|account| JsonValue::String(account.to_string().chars().into_iter().collect()))
+				.collect(),
+		)
+		.serialize();
+
+		// Form the request
+		let request = http::Request::new("http://localhost:3001/balances")
+			.method(http::Method::Post)
+			.deadline(deadline)
+			.body(vec![body])
+			.add_header("Content-Type", "application/json")
+			.add_header("accept", "*/*")
+			.send()
+			.map_err(|_| http::Error::IoError)?;
+
+		log::debug!(target: "offchain-worker", "Request sent: {:?}", request);
+
+		// Wait until the request is done, or until the deadline is reached
+		let response = request.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
+
+		let binding = response.body().collect::<Vec<u8>>();
+
+		let json_str: &str = match core::str::from_utf8(&binding) {
+			Ok(v) => v,
+			Err(_e) => "Error parsing json",
+		};
+
+		let raw_accounts = parse_json(json_str).map_err(|_| http::Error::IoError)?;
+
+		log::debug!(target: "offchain-worker", "Response: {:?}", accounts);
+
+		let mut parsed_accounts = vec![];
+
+		// Parse the response. Expects a list of accounts and their balances
+		// Example response:
+		// ```json
+		// [
+		//   {"account_id": "5GQ...","balance": "100.11"},
+		//   {"account_id": "5FQ...","balance": "200.22"},
+		//   ..
+		// ]
+		// ```
+		match raw_accounts {
+			JsonValue::Array(inner_accounts) =>
+				for inner_account in inner_accounts {
+					match inner_account {
+						JsonValue::Object(entries) => {
+							debug_assert!(
+								entries.len() == 2,
+								"Invalid response, expected 2 fields"
+							);
+							let account_id = entries[0].clone();
+							let balance = entries[1].clone();
+
+							let account_id = AccountIdDecoder::<T>::try_convert(&account_id.1)
+								.map_err(|_| http::Error::IoError)?;
+
+							let balance = BalanceDecoder::<T>::try_convert(&balance.1)
+								.map_err(|_| http::Error::IoError)?;
+
+							parsed_accounts.push((account_id, balance));
+						},
+						_ => return Err(http::Error::IoError),
+					}
+				},
+			_ => return Err(http::Error::IoError),
+		};
+
+		// Incoming accounts should match the registered accounts, basic check
+		debug_assert!(
+			accounts.len() == parsed_accounts.len(),
+			"Invalid response, expected {} accounts",
+			parsed_accounts.len()
+		);
+
+		Ok(parsed_accounts.try_into().map_err(|_| http::Error::IoError)?)
 	}
 }

@@ -1,15 +1,19 @@
 //! Mock runtime for tests
 
+use crate::crypto;
 use frame_support::{parameter_types, traits::Everything, weights::IdentityFee, PalletId};
 use pallet_balances::AccountData;
-use sp_core::{ConstU128, ConstU32, ConstU64, H256};
+use sp_core::{sr25519::Signature, ConstU128, ConstU32, ConstU64, H256};
 use sp_runtime::{
-	traits::{AccountIdConversion, BlakeTwo256, IdentityLookup},
+	testing::TestXt,
+	traits::{
+		AccountIdConversion, BlakeTwo256, Extrinsic as ExtrinsicT, IdentifyAccount, IdentityLookup,
+		Verify,
+	},
 	BuildStorage,
 };
 
 type Block = frame_system::mocking::MockBlock<Test>;
-type AccountId = u64;
 type Balance = u128;
 
 /// Initial balance of an account.
@@ -78,12 +82,48 @@ parameter_types! {
 	pub PalletAccount: AccountId = PalletId(*b"py/iso85").into_account_truncating();
 }
 
+type Extrinsic = TestXt<RuntimeCall, ()>;
+type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
+
+impl frame_system::offchain::SigningTypes for Test {
+	type Public = <Signature as Verify>::Signer;
+	type Signature = Signature;
+}
+
+impl<LocalCall> frame_system::offchain::SendTransactionTypes<LocalCall> for Test
+where
+	RuntimeCall: From<LocalCall>,
+{
+	type OverarchingCall = RuntimeCall;
+	type Extrinsic = Extrinsic;
+}
+
+impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Test
+where
+	RuntimeCall: From<LocalCall>,
+{
+	fn create_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
+		call: RuntimeCall,
+		_public: <Signature as Verify>::Signer,
+		_account: AccountId,
+		nonce: u64,
+	) -> Option<(RuntimeCall, <Extrinsic as ExtrinsicT>::SignaturePayload)> {
+		Some((call, (nonce, ())))
+	}
+}
+
 impl crate::Config for Test {
+	type AuthorityId = crypto::TestAuthId;
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type PalletAccount = PalletAccount;
 	type MaxStringSize = ConstU32<1024>;
 	type WeightToFee = IdentityFee<Balance>;
+}
+
+/// Mock account id for testing
+pub(crate) fn account(value: u8) -> AccountId {
+	sp_core::sr25519::Public::from_raw([value; 32])
 }
 
 /// Helper struct to create new test externalities
@@ -94,13 +134,13 @@ pub(crate) struct ExtBuilder {
 }
 
 impl ExtBuilder {
-	pub(crate) fn with_oracle_accounts(mut self, oracle_accounts: Vec<AccountId>) -> Self {
-		self.oracle_accounts = oracle_accounts;
+	pub(crate) fn with_oracle_accounts(mut self, oracle_accounts: Vec<u8>) -> Self {
+		self.oracle_accounts = oracle_accounts.into_iter().map(account).collect();
 		self
 	}
 
-	pub(crate) fn with_accounts(mut self, accounts: Vec<AccountId>) -> Self {
-		self.accounts = accounts;
+	pub(crate) fn with_accounts(mut self, accounts: Vec<u8>) -> Self {
+		self.accounts = accounts.into_iter().map(account).collect();
 		self
 	}
 
