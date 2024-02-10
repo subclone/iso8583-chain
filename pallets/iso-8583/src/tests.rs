@@ -387,3 +387,123 @@ mod trait_tests {
 		});
 	}
 }
+
+mod offchain_worker {
+	use super::*;
+	use crate::{AccountsOf, Config};
+	use codec::Decode;
+	use frame_support::traits::{Get, OffchainWorker};
+	use frame_system::pallet_prelude::BlockNumberFor;
+	use sp_core::offchain::{testing, OffchainWorkerExt, TransactionPoolExt};
+	use sp_keystore::{testing::MemoryKeystore, Keystore, KeystoreExt};
+	use sp_runtime::RuntimeAppPublic;
+
+	#[test]
+	fn fetch_balances_works() {
+		let (offchain, state) = testing::TestOffchainExt::new();
+		let mut t = ExtBuilder::default().with_accounts(vec![]).build();
+		t.register_extension(OffchainWorkerExt::new(offchain));
+
+		let interval: BlockNumberFor<Test> = <Test as Config>::OffchainWorkerInterval::get();
+
+		// we are not expecting any request
+		t.execute_with(|| {
+			ISO8583::offchain_worker(interval - 1);
+		});
+
+		{
+			let mut state = state.write();
+			assert_eq!(state.requests.len(), 0);
+
+			let account_a = format!("[{:?}]", account(123).to_string());
+
+			// Example response:
+			// ```json
+			// [
+			//   {"account_id": "5GQ...","balance": 100.11},
+			//   {"account_id": "5FQ...","balance": 200.22},
+			//   ..
+			// ]
+			// ```
+			let response =
+				format!(r#"[{{"account_id": "{}","balance": 100.11 }}]"#, account(123).to_string());
+
+			// prepare expectation for the request
+			state.expect_request(testing::PendingRequest {
+				method: "POST".into(),
+				uri: "http://localhost:3001/balances".into(),
+				body: account_a.into(),
+				response: Some(response.into()),
+				sent: true,
+				headers: vec![
+					("Content-Type".to_string(), "application/json".to_string()),
+					("accept".to_string(), "*/*".to_string()),
+				],
+				..Default::default()
+			});
+		}
+
+		// skip to block `OffchainWorkerInterval`
+		t.execute_with(|| {
+			let parsed_accounts: AccountsOf<Test> = vec![(account(123), 10011)].try_into().unwrap();
+			assert_eq!(ISO8583::fetch_balances(vec![account(123)]).unwrap(), parsed_accounts);
+		});
+	}
+
+	#[test]
+	fn fetch_and_submit_updated_balances_works() {
+		const PHRASE: &str =
+			"news slush supreme milk chapter athlete soap sausage put clutch what kitten";
+
+		let (offchain, state) = testing::TestOffchainExt::new();
+		let (pool, pool_state) = testing::TestTransactionPoolExt::new();
+		let keystore = MemoryKeystore::new();
+		keystore
+			.sr25519_generate_new(crate::crypto::Public::ID, Some(&format!("{}/iso8583", PHRASE)))
+			.unwrap();
+
+		let mut t = ExtBuilder::default().with_accounts(vec![123, 125]).build();
+		t.register_extension(OffchainWorkerExt::new(offchain));
+		t.register_extension(TransactionPoolExt::new(pool));
+		t.register_extension(KeystoreExt::new(keystore));
+
+		{
+			let mut state = state.write();
+			assert_eq!(state.requests.len(), 0);
+			let account_a = format!("[{:?}]", account(123).to_string());
+			let response =
+				format!(r#"[{{"account_id": "{}","balance": 100.11 }}]"#, account(123).to_string());
+
+			// prepare expectation for the request
+			state.expect_request(testing::PendingRequest {
+				method: "POST".into(),
+				uri: "http://localhost:3001/balances".into(),
+				body: account_a.into(),
+				response: Some(response.into()),
+				sent: true,
+				headers: vec![
+					("Content-Type".to_string(), "application/json".to_string()),
+					("accept".to_string(), "*/*".to_string()),
+				],
+				..Default::default()
+			});
+		}
+
+		// we are not expecting any request
+		t.execute_with(|| {
+			ISO8583::fetch_and_submit_updated_balances(vec![account(123)], vec![]).unwrap();
+
+			let tx = pool_state.write().transactions.pop().unwrap();
+			assert!(pool_state.read().transactions.is_empty());
+			let tx = crate::mock::Extrinsic::decode(&mut &tx[..]).unwrap();
+			// assert_eq!(tx.signature.unwrap().0, account(123));
+			assert_eq!(
+				tx.call,
+				RuntimeCall::ISO8583(crate::Call::update_accounts {
+					updated_accounts: vec![(account(123), 10011)].try_into().unwrap(),
+					last_iterated_storage_key: Some(vec![].try_into().unwrap())
+				})
+			);
+		});
+	}
+}

@@ -260,6 +260,8 @@ impl pallet_sudo::Config for Runtime {
 parameter_types! {
 	/// Pallet account ID
 	pub PalletAccount: AccountId = PalletId(*b"py/iso85").into_account_truncating();
+	/// Interval between offchain worker runs
+	pub const OffchainWorkerInterval: BlockNumber = 10;
 }
 
 impl pallet_iso_8583::Config for Runtime {
@@ -268,6 +270,7 @@ impl pallet_iso_8583::Config for Runtime {
 	type PalletAccount = PalletAccount;
 	type MaxStringSize = ConstU32<1024>;
 	type WeightToFee = WeightToFee;
+	type OffchainWorkerInterval = OffchainWorkerInterval;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.

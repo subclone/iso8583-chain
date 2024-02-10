@@ -82,7 +82,7 @@ parameter_types! {
 	pub PalletAccount: AccountId = PalletId(*b"py/iso85").into_account_truncating();
 }
 
-type Extrinsic = TestXt<RuntimeCall, ()>;
+pub(crate) type Extrinsic = TestXt<RuntimeCall, ()>;
 type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
 
 impl frame_system::offchain::SigningTypes for Test {
@@ -119,6 +119,7 @@ impl crate::Config for Test {
 	type PalletAccount = PalletAccount;
 	type MaxStringSize = ConstU32<1024>;
 	type WeightToFee = IdentityFee<Balance>;
+	type OffchainWorkerInterval = ConstU64<2>;
 }
 
 /// Mock account id for testing

@@ -1,4 +1,5 @@
 //! Implementations for the pallet.
+
 use super::*;
 use crate::traits::ERC20R;
 use frame_support::{
@@ -6,7 +7,9 @@ use frame_support::{
 	pallet_prelude::DispatchResult,
 	traits::tokens::{currency::Currency, ExistenceRequirement},
 };
-use sp_runtime::{traits::TryConvert, SaturatedConversion};
+
+use sp_core::crypto::Ss58Codec;
+use sp_runtime::{traits::TryConvert, AccountId32, SaturatedConversion};
 
 impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 	fn transfer(from: &AccountIdOf<T>, to: &AccountIdOf<T>, value: BalanceOf<T>) -> DispatchResult {
@@ -66,9 +69,9 @@ impl<T: Config> TryConvert<&JsonValue, BalanceOf<T>> for BalanceDecoder<T> {
 		json.clone()
 			.to_number()
 			.map(|num| {
-				let value_1 = num.integer as u128 * 10_u128.pow(num.exponent as u32 + 10);
+				let value_1 = num.integer as u128 * 10_u128.pow(num.exponent as u32 + 2);
 				let value_2 = num.fraction as u128 *
-					10_u128.pow(num.exponent as u32 + 10 - num.fraction_length);
+					10_u128.pow(num.exponent as u32 + 2 - num.fraction_length);
 				(value_1 + value_2).saturated_into()
 			})
 			.ok_or(json)
@@ -80,12 +83,10 @@ pub(crate) struct AccountIdDecoder<T: Config>(sp_std::marker::PhantomData<T>);
 
 impl<T: Config> TryConvert<&JsonValue, AccountIdOf<T>> for AccountIdDecoder<T> {
 	fn try_convert(json: &JsonValue) -> Result<AccountIdOf<T>, &JsonValue> {
-		let raw_bytes = json
-			.clone()
-			.to_string()
-			.map(|v| v.iter().map(|c| *c as u8).collect::<Vec<_>>())
-			.ok_or(json)?;
+		let raw_bytes =
+			json.clone().to_string().map(|v| v.iter().collect::<Vec<char>>()).ok_or(json)?;
 
-		AccountIdOf::<T>::decode(&mut &raw_bytes[..]).map_err(|_| json)
+		let account_id_32 = AccountId32::from_ss58check(&raw_bytes).map_err(|_| json)?;
+		AccountIdOf::<T>::decode(&mut &account_id_32.encode()[..]).map_err(|_| json)
 	}
 }

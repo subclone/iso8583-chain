@@ -18,11 +18,16 @@ use frame_system::{
 	offchain::{SendSignedTransaction, Signer},
 	pallet_prelude::OriginFor,
 };
-use sp_runtime::{offchain::http, traits::TryConvert, KeyTypeId, Saturating};
+use sp_runtime::{
+	offchain::http,
+	traits::{TryConvert, Zero},
+	KeyTypeId, Saturating,
+};
 
 use frame_support::{storage::unhashed, weights::WeightToFee};
 use frame_system::{offchain::CreateSignedTransaction, pallet_prelude::*};
 use lite_json::{parse_json, JsonValue, Serialize};
+use sp_std::vec;
 
 pub use pallet::*;
 use traits::*;
@@ -43,6 +48,9 @@ mod tests;
 /// `KeyTypeId` from the keystore and use the ones it finds to sign the transaction.
 /// The keys can be inserted manually via RPC (see `author_insertKey`).
 pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"iso8");
+
+/// Max number of accounts to query in offchain worker
+pub const MAX_ACCOUNTS: u32 = 20;
 
 /// Based on the above `KeyTypeId` we need to generate a pallet-specific crypto type wrappers.
 /// We can use from supported crypto kinds (`sr25519`, `ed25519` and `ecdsa`) and augment
@@ -106,6 +114,9 @@ pub mod pallet {
 		type MaxStringSize: Get<u32>;
 		/// Weight to fee conversion algorithm
 		type WeightToFee: WeightToFee<Balance = BalanceOf<Self>>;
+		/// Interval between offchain worker runs
+		#[pallet::constant]
+		type OffchainWorkerInterval: Get<BlockNumberFor<Self>>;
 	}
 
 	/// Accounts registered in the oracle
@@ -342,7 +353,7 @@ pub mod pallet {
 		pub fn update_accounts(
 			origin: OriginFor<T>,
 			updated_accounts: AccountsOf<T>,
-			last_iterated_storage_key: StorageKey,
+			last_iterated_storage_key: Option<StorageKey>,
 		) -> DispatchResult {
 			// it is an unsigned transaction
 			ensure_none(origin)?;
@@ -354,7 +365,9 @@ pub mod pallet {
 				}
 			}
 
-			LastIteratedStorageKey::<T>::put(last_iterated_storage_key);
+			if let Some(key) = last_iterated_storage_key {
+				LastIteratedStorageKey::<T>::put(key);
+			}
 
 			Ok(())
 		}
@@ -366,7 +379,12 @@ pub mod pallet {
 		///
 		/// Queries balances of all registered accounts and makes sure they are in sync with the
 		/// offchain ledger.
-		fn offchain_worker(_now: BlockNumberFor<T>) {
+		fn offchain_worker(now: BlockNumberFor<T>) {
+			// respect interval between offchain worker runs
+			if now % T::OffchainWorkerInterval::get() != Zero::zero() {
+				return;
+			}
+
 			// get last iterated storage key
 			let prefix = storage::storage_prefix(
 				<Pallet<T> as PalletInfoAccess>::name().as_bytes(),
@@ -389,7 +407,7 @@ pub mod pallet {
 					accounts.push(account);
 				}
 
-				if count >= 20 {
+				if count >= MAX_ACCOUNTS {
 					break;
 				}
 			}
@@ -521,7 +539,7 @@ impl<T: Config> Pallet<T> {
 		// Actually send the extrinsic to the chain
 		let result = signer.send_signed_transaction(|_acct| Call::update_accounts {
 			updated_accounts: updated_accounts.clone(),
-			last_iterated_storage_key: last_iterated_storage_key.clone(),
+			last_iterated_storage_key: Some(last_iterated_storage_key.clone()),
 		});
 
 		for (acc, res) in &result {
@@ -576,7 +594,7 @@ impl<T: Config> Pallet<T> {
 
 		log::debug!(target: "offchain-worker", "Response: {:?}", accounts);
 
-		let mut parsed_accounts = vec![];
+		let mut parsed_accounts = Vec::new();
 
 		// Parse the response. Expects a list of accounts and their balances
 		// Example response:
@@ -596,6 +614,7 @@ impl<T: Config> Pallet<T> {
 								entries.len() == 2,
 								"Invalid response, expected 2 fields"
 							);
+
 							let account_id = entries[0].clone();
 							let balance = entries[1].clone();
 
