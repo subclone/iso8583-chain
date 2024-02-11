@@ -390,13 +390,66 @@ mod trait_tests {
 
 mod offchain_worker {
 	use super::*;
-	use crate::{AccountsOf, Config};
+	use crate::{Accounts, AccountsOf, Config};
 	use codec::Decode;
 	use frame_support::traits::{Get, OffchainWorker};
 	use frame_system::pallet_prelude::BlockNumberFor;
+	use lite_json::{JsonValue, NumberValue, Serialize};
 	use sp_core::offchain::{testing, OffchainWorkerExt, TransactionPoolExt};
 	use sp_keystore::{testing::MemoryKeystore, Keystore, KeystoreExt};
 	use sp_runtime::RuntimeAppPublic;
+
+	/// Indent the body of the request.
+	///
+	/// simply adds opening and closing brackets and newlines to the body.
+	fn mock_request(accounts: Vec<u8>) -> Vec<u8> {
+		let mut full = Vec::new();
+
+		full.push('[' as u8);
+
+		for index in accounts {
+			full.push('"' as u8);
+			full.extend_from_slice(&account(index).encode()[..]);
+			full.push('"' as u8);
+			full.push(',' as u8);
+		}
+
+		// remove the last comma
+		full.pop();
+		full.push(']' as u8);
+
+		full
+	}
+
+	fn mock_response(accounts: Vec<(u8, f64)>) -> Vec<u8> {
+		JsonValue::Array(
+			accounts
+				.iter()
+				.map(|(id, balance)| {
+					JsonValue::Object(vec![
+						(
+							"account_id".to_string().chars().into_iter().collect(),
+							JsonValue::String(
+								account(*id).encode().into_iter().map(|v| v as char).collect(),
+							),
+						),
+						(
+							"balance".to_string().chars().into_iter().collect(),
+							JsonValue::Number(NumberValue {
+								integer: balance.trunc() as u64,
+								fraction: (balance.fract() * 100.0).ceil() as u64,
+								fraction_length: 2,
+								exponent: 0,
+								negative: false,
+							}),
+						),
+					])
+				})
+				.collect::<Vec<_>>()
+				.into(),
+		)
+		.serialize()
+	}
 
 	#[test]
 	fn fetch_balances_works() {
@@ -415,25 +468,14 @@ mod offchain_worker {
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
-			let account_a = format!("[{:?}]", account(123).to_string());
-
-			// Example response:
-			// ```json
-			// [
-			//   {"account_id": "5GQ...","balance": 100.11},
-			//   {"account_id": "5FQ...","balance": 200.22},
-			//   ..
-			// ]
-			// ```
-			let response =
-				format!(r#"[{{"account_id": "{}","balance": 100.11 }}]"#, account(123).to_string());
+			let response = mock_response(vec![(123, 100.11)]);
 
 			// prepare expectation for the request
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: account_a.into(),
-				response: Some(response.into()),
+				body: mock_request(vec![123]),
+				response: Some(response),
 				sent: true,
 				headers: vec![
 					("Content-Type".to_string(), "application/json".to_string()),
@@ -470,16 +512,15 @@ mod offchain_worker {
 		{
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
-			let account_a = format!("[{:?}]", account(123).to_string());
-			let response =
-				format!(r#"[{{"account_id": "{}","balance": 100.11 }}]"#, account(123).to_string());
+
+			let response = mock_response(vec![(123, 100.11), (125, 125.25)]);
 
 			// prepare expectation for the request
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: account_a.into(),
-				response: Some(response.into()),
+				body: mock_request(vec![123, 125]),
+				response: Some(response),
 				sent: true,
 				headers: vec![
 					("Content-Type".to_string(), "application/json".to_string()),
@@ -491,7 +532,8 @@ mod offchain_worker {
 
 		// we are not expecting any request
 		t.execute_with(|| {
-			ISO8583::fetch_and_submit_updated_balances(vec![account(123)], vec![]).unwrap();
+			ISO8583::fetch_and_submit_updated_balances(vec![account(123), account(125)], vec![])
+				.unwrap();
 
 			let tx = pool_state.write().transactions.pop().unwrap();
 			assert!(pool_state.read().transactions.is_empty());
@@ -500,10 +542,83 @@ mod offchain_worker {
 			assert_eq!(
 				tx.call,
 				RuntimeCall::ISO8583(crate::Call::update_accounts {
-					updated_accounts: vec![(account(123), 10011)].try_into().unwrap(),
+					updated_accounts: vec![(account(123), 10011), (account(125), 12525)]
+						.try_into()
+						.unwrap(),
 					last_iterated_storage_key: Some(vec![].try_into().unwrap())
 				})
 			);
 		});
+	}
+
+	#[test]
+	fn offchain_worker_works() {
+		const PHRASE: &str =
+			"news slush supreme milk chapter athlete soap sausage put clutch what kitten";
+
+		let (offchain, state) = testing::TestOffchainExt::new();
+		let (pool, pool_state) = testing::TestTransactionPoolExt::new();
+		let keystore = MemoryKeystore::new();
+		keystore
+			.sr25519_generate_new(crate::crypto::Public::ID, Some(&format!("{}/iso8583", PHRASE)))
+			.unwrap();
+
+		let mut t = ExtBuilder::default().with_accounts(vec![123, 125]).build();
+
+		t.register_extension(OffchainWorkerExt::new(offchain));
+		t.register_extension(TransactionPoolExt::new(pool));
+		t.register_extension(KeystoreExt::new(keystore));
+
+		let interval: BlockNumberFor<Test> = <Test as Config>::OffchainWorkerInterval::get();
+
+		{
+			let mut state = state.write();
+			assert_eq!(state.requests.len(), 0);
+
+			let response = mock_response(vec![(125, 125.25), (123, 100.11)]);
+
+			// prepare expectation for the request
+			state.expect_request(testing::PendingRequest {
+				method: "POST".into(),
+				uri: "http://localhost:3001/balances".into(),
+				body: mock_request(vec![125, 123]),
+				response: Some(response),
+				sent: true,
+				headers: vec![
+					("Content-Type".to_string(), "application/json".to_string()),
+					("accept".to_string(), "*/*".to_string()),
+				],
+				..Default::default()
+			});
+		}
+
+		t.execute_with(|| {
+			ISO8583::offchain_worker(interval);
+
+			let tx = pool_state.write().transactions.pop().unwrap();
+			assert!(pool_state.read().transactions.is_empty());
+			let tx = crate::mock::Extrinsic::decode(&mut &tx[..]).unwrap();
+			// assert_eq!(tx.signature.unwrap().0, account(123));
+			assert_eq!(
+				tx.call,
+				RuntimeCall::ISO8583(crate::Call::update_accounts {
+					updated_accounts: vec![(account(125), 12525), (account(123), 10011)]
+						.try_into()
+						.unwrap(),
+					last_iterated_storage_key: Some(
+						vec![
+							154, 237, 128, 107, 236, 245, 7, 140, 126, 24, 139, 0, 248, 2, 43, 16,
+							142, 231, 65, 138, 101, 49, 23, 61, 96, 209, 246, 168, 45, 143, 77, 81,
+							255, 208, 58, 29, 34, 171, 170, 249, 207, 18, 242, 36, 206, 63, 124,
+							149, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123,
+							123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123,
+							123, 123, 123, 123, 123
+						]
+						.try_into()
+						.unwrap()
+					)
+				})
+			);
+		})
 	}
 }

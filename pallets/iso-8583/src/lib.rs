@@ -24,7 +24,7 @@ use sp_runtime::{
 	KeyTypeId, Saturating,
 };
 
-use frame_support::{storage::unhashed, weights::WeightToFee};
+use frame_support::weights::WeightToFee;
 use frame_system::{offchain::CreateSignedTransaction, pallet_prelude::*};
 use lite_json::{parse_json, JsonValue, Serialize};
 use sp_std::vec;
@@ -401,9 +401,18 @@ pub mod pallet {
 
 			let mut accounts = Vec::new();
 			while let Some(next) = sp_io::storage::next_key(&previous_key) {
+				// Ensure we are iterating through the correct storage prefix
+				if !next.starts_with(&prefix) {
+					break;
+				}
+
 				previous_key = next;
 				count += 1;
-				if let Some(account) = unhashed::get::<AccountIdOf<T>>(&previous_key) {
+
+				// decode from last 32 bytes of the key
+				if let Ok(account) =
+					AccountIdOf::<T>::decode(&mut &previous_key[previous_key.len() - 32..])
+				{
 					accounts.push(account);
 				}
 
@@ -563,8 +572,11 @@ impl<T: Config> Pallet<T> {
 		let body = JsonValue::Array(
 			accounts
 				.iter()
-				.map(|account| JsonValue::String(account.to_string().chars().into_iter().collect()))
-				.collect(),
+				.map(|account| {
+					JsonValue::String(account.encode().into_iter().map(|x| x as char).collect())
+				})
+				.collect::<Vec<_>>()
+				.into(),
 		)
 		.serialize();
 

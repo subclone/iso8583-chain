@@ -83,7 +83,7 @@ parameter_types! {
 }
 
 pub(crate) type Extrinsic = TestXt<RuntimeCall, ()>;
-type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
+pub(crate) type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
 
 impl frame_system::offchain::SigningTypes for Test {
 	type Public = <Signature as Verify>::Signer;
