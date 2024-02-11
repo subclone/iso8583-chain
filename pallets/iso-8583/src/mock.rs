@@ -113,7 +113,7 @@ where
 }
 
 impl crate::Config for Test {
-	type AuthorityId = crypto::TestAuthId;
+	type AuthorityId = crypto::Iso8583AuthId;
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type PalletAccount = PalletAccount;
