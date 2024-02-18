@@ -36,6 +36,14 @@ pub fn authority_keys_from_seed(s: &str) -> (AuraId, GrandpaId) {
 	(get_from_seed::<AuraId>(s), get_from_seed::<GrandpaId>(s))
 }
 
+/// Properties for the testnet.
+pub fn testnet_properties() -> sc_service::Properties {
+	let mut properties = sc_service::Properties::new();
+	properties.insert("tokenSymbol".into(), "ISO".into());
+	properties.insert("tokenDecimals".into(), 6.into());
+	properties
+}
+
 pub fn development_config() -> Result<ChainSpec, String> {
 	let wasm_binary = WASM_BINARY.ok_or_else(|| "Development wasm not available".to_string())?;
 
@@ -70,7 +78,7 @@ pub fn development_config() -> Result<ChainSpec, String> {
 		None,
 		None,
 		// Properties
-		None,
+		Some(testnet_properties()),
 		// Extensions
 		None,
 	))
@@ -118,7 +126,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 		None,
 		// Properties
 		None,
-		None,
+		Some(testnet_properties()),
 		// Extensions
 		None,
 	))

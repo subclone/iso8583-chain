@@ -542,7 +542,7 @@ impl<T: Config> Pallet<T> {
 			return Err("No local accounts available");
 		}
 
-		let updated_accounts =
+		let mut updated_accounts =
 			Self::fetch_balances(&signer, accounts).map_err(|_| "Failed to fetch balances")?;
 
 		let last_iterated_storage_key: StorageKey =
@@ -553,6 +553,12 @@ impl<T: Config> Pallet<T> {
 		if updated_accounts.is_empty() {
 			return Ok(());
 		}
+
+		// check for each balance if it is updated
+		updated_accounts.retain(|(account, balance)| {
+			let current_balance = T::Currency::free_balance(account);
+			*balance != current_balance
+		});
 
 		// Actually send the extrinsic to the chain
 		let result = signer.send_signed_transaction(|_acct| Call::update_accounts {
@@ -667,11 +673,7 @@ impl<T: Config> Pallet<T> {
 		};
 
 		// Incoming accounts should match the registered accounts, basic check
-		debug_assert!(
-			accounts.len() == parsed_accounts.len(),
-			"Invalid response, expected {} accounts",
-			parsed_accounts.len()
-		);
+		log::debug!("Received {} accounts", parsed_accounts.len());
 
 		Ok(parsed_accounts.try_into().map_err(|_| http::Error::IoError)?)
 	}

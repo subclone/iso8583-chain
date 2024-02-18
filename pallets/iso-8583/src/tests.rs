@@ -448,7 +448,7 @@ mod offchain_worker {
 								integer: balance.trunc() as u64,
 								fraction: (balance.fract() * 100.0).ceil() as u64,
 								fraction_length: 2,
-								exponent: 0,
+								exponent: 4,
 								negative: false,
 							}),
 						),
@@ -507,7 +507,8 @@ mod offchain_worker {
 
 		// skip to block `OffchainWorkerInterval`
 		t.execute_with(|| {
-			let parsed_accounts: AccountsOf<Test> = vec![(account(123), 10011)].try_into().unwrap();
+			let parsed_accounts: AccountsOf<Test> =
+				vec![(account(123), 100_110_000)].try_into().unwrap();
 			assert_eq!(
 				ISO8583::fetch_balances(&signer, vec![account(123)]).unwrap(),
 				parsed_accounts
@@ -566,9 +567,12 @@ mod offchain_worker {
 			assert_eq!(
 				tx.call,
 				RuntimeCall::ISO8583(crate::Call::update_accounts {
-					updated_accounts: vec![(account(123), 10011), (account(125), 12525)]
-						.try_into()
-						.unwrap(),
+					updated_accounts: vec![
+						(account(123), 100_110_000),
+						(account(125), 125_250_000)
+					]
+					.try_into()
+					.unwrap(),
 					last_iterated_storage_key: Some(vec![].try_into().unwrap())
 				})
 			);
@@ -629,9 +633,12 @@ mod offchain_worker {
 			assert_eq!(
 				tx.call,
 				RuntimeCall::ISO8583(crate::Call::update_accounts {
-					updated_accounts: vec![(account(125), 12525), (account(123), 10011)]
-						.try_into()
-						.unwrap(),
+					updated_accounts: vec![
+						(account(125), 125_250_000),
+						(account(123), 100_110_000)
+					]
+					.try_into()
+					.unwrap(),
 					last_iterated_storage_key: Some(
 						vec![
 							154, 237, 128, 107, 236, 245, 7, 140, 126, 24, 139, 0, 248, 2, 43, 16,
@@ -646,6 +653,37 @@ mod offchain_worker {
 					)
 				})
 			);
-		})
+		});
+
+		{
+			let mut state = state.write();
+			assert_eq!(state.requests.len(), 0);
+
+			let body = mock_request(vec![125, 123]);
+			let mut payload = MOCKED_SIGNATURE.to_vec();
+			payload.extend(body);
+
+			let response = mock_response(vec![]);
+
+			// prepare expectation for the request
+			state.expect_request(testing::PendingRequest {
+				method: "POST".into(),
+				uri: "http://localhost:3001/balances".into(),
+				body: payload,
+				response: Some(response),
+				sent: true,
+				headers: vec![
+					("Content-Type".to_string(), "application/json".to_string()),
+					("accept".to_string(), "*/*".to_string()),
+				],
+				..Default::default()
+			});
+		}
+
+		t.execute_with(|| {
+			ISO8583::offchain_worker(interval * 2);
+			// no transaction is submitted, since response is empty
+			assert!(pool_state.read().transactions.is_empty());
+		});
 	}
 }
