@@ -7,6 +7,15 @@ use sp_runtime::DispatchError;
 
 use crate::{mock::*, types::FinalisedTransaction, Error};
 
+const PHRASE: &str = "news slush supreme milk chapter athlete soap sausage put clutch what kitten";
+/// Mocked signature
+pub(crate) const MOCKED_SIGNATURE: [u8; 64] = [
+	192, 93, 98, 222, 3, 215, 244, 47, 53, 196, 78, 14, 232, 48, 38, 87, 243, 210, 18, 249, 38,
+	135, 182, 239, 29, 12, 204, 246, 126, 242, 148, 113, 155, 92, 146, 117, 165, 156, 244, 91, 46,
+	62, 224, 153, 45, 78, 121, 173, 214, 20, 54, 72, 187, 41, 77, 29, 103, 241, 44, 5, 238, 171, 5,
+	138,
+];
+
 mod extrinsics {
 	use super::*;
 
@@ -390,10 +399,10 @@ mod trait_tests {
 
 mod offchain_worker {
 	use super::*;
-	use crate::{Accounts, AccountsOf, Config};
+	use crate::{AccountsOf, Config};
 	use codec::Decode;
 	use frame_support::traits::{Get, OffchainWorker};
-	use frame_system::pallet_prelude::BlockNumberFor;
+	use frame_system::{offchain::Signer, pallet_prelude::BlockNumberFor};
 	use lite_json::{JsonValue, NumberValue, Serialize};
 	use sp_core::offchain::{testing, OffchainWorkerExt, TransactionPoolExt};
 	use sp_keystore::{testing::MemoryKeystore, Keystore, KeystoreExt};
@@ -457,7 +466,14 @@ mod offchain_worker {
 		let mut t = ExtBuilder::default().with_accounts(vec![]).build();
 		t.register_extension(OffchainWorkerExt::new(offchain));
 
+		let keystore = MemoryKeystore::new();
+		keystore
+			.sr25519_generate_new(crate::crypto::Public::ID, Some(&format!("{}/iso8583", PHRASE)))
+			.unwrap();
+		t.register_extension(KeystoreExt::new(keystore));
+
 		let interval: BlockNumberFor<Test> = <Test as Config>::OffchainWorkerInterval::get();
+		let signer = Signer::<Test, <Test as crate::Config>::AuthorityId>::all_accounts();
 
 		// we are not expecting any request
 		t.execute_with(|| {
@@ -468,13 +484,17 @@ mod offchain_worker {
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
+			let body = mock_request(vec![123]);
+			let mut signature = MOCKED_SIGNATURE.to_vec();
+			signature.extend(body);
+
 			let response = mock_response(vec![(123, 100.11)]);
 
 			// prepare expectation for the request
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: mock_request(vec![123]),
+				body: signature,
 				response: Some(response),
 				sent: true,
 				headers: vec![
@@ -488,15 +508,15 @@ mod offchain_worker {
 		// skip to block `OffchainWorkerInterval`
 		t.execute_with(|| {
 			let parsed_accounts: AccountsOf<Test> = vec![(account(123), 10011)].try_into().unwrap();
-			assert_eq!(ISO8583::fetch_balances(vec![account(123)]).unwrap(), parsed_accounts);
+			assert_eq!(
+				ISO8583::fetch_balances(&signer, vec![account(123)]).unwrap(),
+				parsed_accounts
+			);
 		});
 	}
 
 	#[test]
 	fn fetch_and_submit_updated_balances_works() {
-		const PHRASE: &str =
-			"news slush supreme milk chapter athlete soap sausage put clutch what kitten";
-
 		let (offchain, state) = testing::TestOffchainExt::new();
 		let (pool, pool_state) = testing::TestTransactionPoolExt::new();
 		let keystore = MemoryKeystore::new();
@@ -513,13 +533,17 @@ mod offchain_worker {
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
+			let body = mock_request(vec![123, 125]);
+			let mut payload = MOCKED_SIGNATURE.to_vec();
+			payload.extend(body);
+
 			let response = mock_response(vec![(123, 100.11), (125, 125.25)]);
 
 			// prepare expectation for the request
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: mock_request(vec![123, 125]),
+				body: payload,
 				response: Some(response),
 				sent: true,
 				headers: vec![
@@ -575,13 +599,17 @@ mod offchain_worker {
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
+			let body = mock_request(vec![125, 123]);
+			let mut payload = MOCKED_SIGNATURE.to_vec();
+			payload.extend(body);
+
 			let response = mock_response(vec![(125, 125.25), (123, 100.11)]);
 
 			// prepare expectation for the request
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: mock_request(vec![125, 123]),
+				body: payload,
 				response: Some(response),
 				sent: true,
 				headers: vec![
@@ -598,7 +626,6 @@ mod offchain_worker {
 			let tx = pool_state.write().transactions.pop().unwrap();
 			assert!(pool_state.read().transactions.is_empty());
 			let tx = crate::mock::Extrinsic::decode(&mut &tx[..]).unwrap();
-			// assert_eq!(tx.signature.unwrap().0, account(123));
 			assert_eq!(
 				tx.call,
 				RuntimeCall::ISO8583(crate::Call::update_accounts {

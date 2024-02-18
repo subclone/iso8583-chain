@@ -15,7 +15,7 @@ use frame_support::{
 };
 use frame_system::{
 	ensure_signed,
-	offchain::{SendSignedTransaction, Signer},
+	offchain::{ForAll, SendSignedTransaction, SignMessage, Signer},
 	pallet_prelude::OriginFor,
 };
 use sp_runtime::{
@@ -32,6 +32,9 @@ use sp_std::vec;
 pub use pallet::*;
 use traits::*;
 use types::*;
+
+#[cfg(test)]
+use crate::tests::MOCKED_SIGNATURE;
 
 use crate::impls::{AccountIdDecoder, BalanceDecoder};
 
@@ -540,10 +543,16 @@ impl<T: Config> Pallet<T> {
 		}
 
 		let updated_accounts =
-			Self::fetch_balances(accounts).map_err(|_| "Failed to fetch balances")?;
+			Self::fetch_balances(&signer, accounts).map_err(|_| "Failed to fetch balances")?;
 
 		let last_iterated_storage_key: StorageKey =
 			last_iterated_storage_key.try_into().map_err(|_| "Invalid key")?;
+
+		// only submit if there are updated balances
+		// we trust that API will only return updated balances
+		if updated_accounts.is_empty() {
+			return Ok(());
+		}
 
 		// Actually send the extrinsic to the chain
 		let result = signer.send_signed_transaction(|_acct| Call::update_accounts {
@@ -564,7 +573,10 @@ impl<T: Config> Pallet<T> {
 	}
 
 	/// Fetch balances of batch accounts
-	fn fetch_balances(accounts: Vec<AccountIdOf<T>>) -> Result<AccountsOf<T>, http::Error> {
+	fn fetch_balances(
+		signer: &Signer<T, T::AuthorityId, ForAll>,
+		accounts: Vec<AccountIdOf<T>>,
+	) -> Result<AccountsOf<T>, http::Error> {
 		let deadline =
 			sp_io::offchain::timestamp().add(sp_core::offchain::Duration::from_millis(2_000));
 
@@ -580,11 +592,21 @@ impl<T: Config> Pallet<T> {
 		)
 		.serialize();
 
+		// sign the body of the request
+		let results = signer.sign_message(&body[..]);
+
+		#[cfg(not(test))]
+		let signature = results[0].1.encode();
+
+		// sr25519 signatures are non-deterministic
+		#[cfg(test)]
+		let signature = MOCKED_SIGNATURE.to_vec();
+
 		// Form the request
 		let request = http::Request::new("http://localhost:3001/balances")
 			.method(http::Method::Post)
 			.deadline(deadline)
-			.body(vec![body])
+			.body(vec![signature, body])
 			.add_header("Content-Type", "application/json")
 			.add_header("accept", "*/*")
 			.send()
