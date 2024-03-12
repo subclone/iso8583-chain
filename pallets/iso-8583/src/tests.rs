@@ -17,6 +17,9 @@ pub(crate) const MOCKED_SIGNATURE: [u8; 64] = [
 ];
 
 mod extrinsics {
+	use sp_keystore::{testing::MemoryKeystore, Keystore, KeystoreExt};
+	use sp_runtime::RuntimeAppPublic;
+
 	use super::*;
 
 	#[test]
@@ -294,6 +297,46 @@ mod extrinsics {
 			assert_ok!(ISO8583::remove(RuntimeOrigin::signed(account(1)), account(1)));
 		});
 	}
+	#[test]
+	fn test_update_accounts() {
+		const PHRASE: &str =
+			"news slush supreme milk chapter athlete soap sausage put clutch what kitten";
+
+		let keystore = MemoryKeystore::new();
+		keystore
+			.sr25519_generate_new(crate::crypto::Public::ID, Some(&format!("{}/iso8583", PHRASE)))
+			.unwrap();
+
+		let mut t = ExtBuilder::default().with_accounts(vec![123, 125]).build();
+
+		t.register_extension(KeystoreExt::new(keystore));
+
+		t.execute_with(|| {
+			// set block to 1, to read events
+			System::set_block_number(1);
+
+			// only ocw account can update accounts
+			assert_noop!(
+				ISO8583::update_accounts_unsigned(
+					RuntimeOrigin::signed(account(255)),
+					vec![(account(123), 100_110_000), (account(125), 125_250_000)]
+						.try_into()
+						.unwrap(),
+					None,
+				),
+				DispatchError::BadOrigin
+			);
+
+			// update accounts
+			assert_ok!(ISO8583::update_accounts_unsigned(
+				RuntimeOrigin::none(),
+				vec![(account(123), 100_110_000), (account(125), 125_250_000)]
+					.try_into()
+					.unwrap(),
+				None,
+			));
+		});
+	}
 }
 
 mod trait_tests {
@@ -566,7 +609,7 @@ mod offchain_worker {
 			// assert_eq!(tx.signature.unwrap().0, account(123));
 			assert_eq!(
 				tx.call,
-				RuntimeCall::ISO8583(crate::Call::update_accounts {
+				RuntimeCall::ISO8583(crate::Call::update_accounts_unsigned {
 					updated_accounts: vec![
 						(account(123), 100_110_000),
 						(account(125), 125_250_000)
@@ -632,7 +675,7 @@ mod offchain_worker {
 			let tx = crate::mock::Extrinsic::decode(&mut &tx[..]).unwrap();
 			assert_eq!(
 				tx.call,
-				RuntimeCall::ISO8583(crate::Call::update_accounts {
+				RuntimeCall::ISO8583(crate::Call::update_accounts_unsigned {
 					updated_accounts: vec![
 						(account(125), 125_250_000),
 						(account(123), 100_110_000)

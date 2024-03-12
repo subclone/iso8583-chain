@@ -353,7 +353,7 @@ pub mod pallet {
 		/// This function is used by the offchain worker to submit updated balances to the chain.
 		#[pallet::weight(T::DbWeight::get().writes(updated_accounts.len() as u64 + 1))]
 		#[pallet::call_index(6)]
-		pub fn update_accounts(
+		pub fn update_accounts_unsigned(
 			origin: OriginFor<T>,
 			updated_accounts: AccountsOf<T>,
 			last_iterated_storage_key: Option<StorageKey>,
@@ -371,6 +371,48 @@ pub mod pallet {
 			if let Some(key) = last_iterated_storage_key {
 				LastIteratedStorageKey::<T>::put(key);
 			}
+
+			Ok(())
+		}
+
+		/// Register an oracle account
+		///
+		/// This function is used to register an oracle account.
+		///
+		/// # Errors
+		///
+		/// Origin must be signed by the root account.
+		///
+		/// # Weight
+		///
+		/// - `O(1)`
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::call_index(7)]
+		pub fn register_oracle(origin: OriginFor<T>, account: AccountIdOf<T>) -> DispatchResult {
+			ensure_root(origin)?;
+
+			OracleAccounts::<T>::insert(&account, ());
+
+			Ok(())
+		}
+
+		/// Remove an oracle account
+		///
+		/// This function is used to remove an oracle account.
+		///
+		/// # Errors
+		///
+		/// Origin must be signed by the root account.
+		///
+		/// # Weight
+		///
+		/// - `O(1)`
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::call_index(8)]
+		pub fn remove_oracle(origin: OriginFor<T>, account: AccountIdOf<T>) -> DispatchResult {
+			ensure_root(origin)?;
+
+			OracleAccounts::<T>::remove(&account);
 
 			Ok(())
 		}
@@ -561,7 +603,7 @@ impl<T: Config> Pallet<T> {
 		});
 
 		// Actually send the extrinsic to the chain
-		let result = signer.send_signed_transaction(|_acct| Call::update_accounts {
+		let result = signer.send_signed_transaction(|_acct| Call::update_accounts_unsigned {
 			updated_accounts: updated_accounts.clone(),
 			last_iterated_storage_key: Some(last_iterated_storage_key.clone()),
 		});
@@ -597,6 +639,8 @@ impl<T: Config> Pallet<T> {
 				.into(),
 		)
 		.serialize();
+
+		log::info!(target: "offchain-worker", "Body: {:?}", body);
 
 		// sign the body of the request
 		let results = signer.sign_message(&body[..]);
