@@ -3,14 +3,14 @@
 use crate::crypto;
 use frame_support::{parameter_types, traits::Everything, weights::IdentityFee, PalletId};
 use pallet_balances::AccountData;
-use sp_core::{sr25519::Signature, ConstU128, ConstU32, ConstU64, H256};
+use sp_core::{sr25519::Signature, ConstU128, ConstU32, ConstU64, Pair, Public, H256};
 use sp_runtime::{
 	testing::TestXt,
 	traits::{
 		AccountIdConversion, BlakeTwo256, Extrinsic as ExtrinsicT, IdentifyAccount, IdentityLookup,
 		Verify,
 	},
-	BuildStorage,
+	BuildStorage, MultiSignature,
 };
 
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -125,6 +125,23 @@ impl crate::Config for Test {
 /// Mock account id for testing
 pub(crate) fn account(value: u8) -> AccountId {
 	sp_core::sr25519::Public::from_raw([value; 32])
+}
+
+/// Helper function to generate a crypto pair from seed
+pub fn get_from_seed<TPublic: Public>(seed: &str) -> <TPublic::Pair as Pair>::Public {
+	TPublic::Pair::from_string(&format!("//{}", seed), None)
+		.expect("static values are valid; qed")
+		.public()
+}
+
+type AccountPublic = <Signature as Verify>::Signer;
+
+/// Helper function to generate an account ID from seed.
+pub fn get_account_id_from_seed<TPublic: Public>(seed: &str) -> AccountId
+where
+	AccountPublic: From<<TPublic::Pair as Pair>::Public>,
+{
+	AccountPublic::from(get_from_seed::<TPublic>(seed)).into_account()
 }
 
 /// Helper struct to create new test externalities

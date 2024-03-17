@@ -83,14 +83,40 @@ pub(crate) struct AccountIdDecoder<T: Config>(sp_std::marker::PhantomData<T>);
 
 impl<T: Config> TryConvert<&JsonValue, AccountIdOf<T>> for AccountIdDecoder<T> {
 	fn try_convert(json: &JsonValue) -> Result<AccountIdOf<T>, &JsonValue> {
-		let raw_bytes = json
+		let account_id_str = json
 			.clone()
 			.to_string()
 			.ok_or(json)?
-			.into_iter()
-			.map(|c| c as u8)
-			.collect::<Vec<_>>();
+			.iter()
+			.map(|c| *c as u8)
+			.collect::<Vec<u8>>();
 
-		AccountIdOf::<T>::decode(&mut &raw_bytes[..]).map_err(|_| json)
+		let decoded_bytes = hex::decode(&account_id_str).map_err(|_| json)?;
+
+		AccountIdOf::<T>::decode(&mut &decoded_bytes[..]).map_err(|_| json)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use lite_json::JsonValue;
+	use sp_core::sr25519;
+	use sp_runtime::traits::TryConvert;
+
+	use crate::mock::{get_account_id_from_seed, ExtBuilder};
+
+	#[test]
+	fn account_id_decoder_works() {
+		ExtBuilder::default().build().execute_with(|| {
+			let account_id = "306721211d5404bd9da88e0204360a1a9ab8b87c66c1bc2fcdd37f3c2222cc20";
+			let json_val = JsonValue::String(account_id.chars().collect());
+
+			let decoded_account_id =
+				super::AccountIdDecoder::<crate::mock::Test>::try_convert(&json_val);
+
+			let dave = get_account_id_from_seed::<sr25519::Public>("Dave");
+
+			assert_eq!(decoded_account_id, Ok(dave));
+		});
 	}
 }

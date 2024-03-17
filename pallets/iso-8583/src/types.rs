@@ -2,11 +2,12 @@
 
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::traits::Currency;
+use frame_system::offchain::{SignedPayload, SigningTypes};
 use scale_info::TypeInfo;
 use sp_core::{ConstU32, RuntimeDebug};
 use sp_runtime::BoundedVec;
 
-use crate::Config;
+use crate::{AccountsOf, Config, StorageKey};
 
 /// Hash used for transaction ID.
 pub type Hash = sp_core::H256;
@@ -72,4 +73,24 @@ pub enum ISO8583FailureReason {
 	DoNotHonor,
 	/// Other
 	Other,
+}
+
+/// Payload used by this example crate to hold price
+/// data required to submit a transaction.
+#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
+pub struct UpdateAccountsPayload<Public, Accounts, StorageKey> {
+	/// Public key of the off-chain worker
+	pub public: Public,
+	/// Updated accounts
+	pub accounts: Accounts,
+	/// Last iterated storage key
+	pub last_key: StorageKey,
+}
+
+impl<T: SigningTypes + crate::Config> SignedPayload<T>
+	for UpdateAccountsPayload<T::Public, AccountsOf<T>, StorageKey>
+{
+	fn public(&self) -> T::Public {
+		self.public.clone()
+	}
 }

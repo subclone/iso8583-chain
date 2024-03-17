@@ -24,6 +24,7 @@ sp-io = { workspace = true }
 
 # JSON no-std support
 lite-json = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 sp-runtime = { workspace = true, features = ["std"] }

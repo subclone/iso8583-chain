@@ -15,7 +15,7 @@ use frame_support::{
 };
 use frame_system::{
 	ensure_signed,
-	offchain::{ForAll, SendSignedTransaction, SignMessage, Signer},
+	offchain::{ForAll, SendUnsignedTransaction, SignMessage, SignedPayload, Signer},
 	pallet_prelude::OriginFor,
 };
 use sp_runtime::{
@@ -189,6 +189,43 @@ pub mod pallet {
 		SourceNotRegistered,
 	}
 
+	#[pallet::validate_unsigned]
+	impl<T: Config> ValidateUnsigned for Pallet<T> {
+		type Call = Call<T>;
+
+		/// Validate unsigned call
+		///
+		/// This function is used to validate unsigned calls.
+		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+			// check if the call is `update_accounts_unsigned`
+			if let Call::update_accounts_unsigned { payload, signature } = call {
+				// valid signature
+				let valid_signature =
+					SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone());
+
+				if !valid_signature {
+					return InvalidTransaction::BadProof.into();
+				}
+
+				let UpdateAccountsPayload { public: _public, accounts, last_key: _ } = payload;
+
+				if accounts.is_empty() {
+					return InvalidTransaction::Call.into();
+				} else if accounts.len() > MAX_ACCOUNTS as usize {
+					return InvalidTransaction::ExhaustsResources.into();
+				}
+
+				ValidTransaction::with_tag_prefix("ISO8583")
+					.priority(TransactionPriority::max_value())
+					.longevity(5)
+					.propagate(false)
+					.build()
+			} else {
+				InvalidTransaction::Call.into()
+			}
+		}
+	}
+
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
 	// These functions materialize as "extrinsics", which are often compared to transactions.
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
@@ -351,26 +388,26 @@ pub mod pallet {
 		/// Submit updated balances
 		///
 		/// This function is used by the offchain worker to submit updated balances to the chain.
-		#[pallet::weight(T::DbWeight::get().writes(updated_accounts.len() as u64 + 1))]
+		#[pallet::weight(T::DbWeight::get().writes(payload.accounts.len() as u64 + 1))]
 		#[pallet::call_index(6)]
 		pub fn update_accounts_unsigned(
 			origin: OriginFor<T>,
-			updated_accounts: AccountsOf<T>,
-			last_iterated_storage_key: Option<StorageKey>,
+			payload: UpdateAccountsPayload<T::Public, AccountsOf<T>, StorageKey>,
+			_signature: T::Signature,
 		) -> DispatchResult {
 			// it is an unsigned transaction
 			ensure_none(origin)?;
 
-			for (account, balance) in updated_accounts {
+			let UpdateAccountsPayload { public: _public, accounts, last_key } = payload;
+
+			for (account, balance) in accounts {
 				// do basic check if account is registered
 				if Accounts::<T>::contains_key(&account) {
 					T::Currency::make_free_balance_be(&account, balance);
 				}
 			}
 
-			if let Some(key) = last_iterated_storage_key {
-				LastIteratedStorageKey::<T>::put(key);
-			}
+			LastIteratedStorageKey::<T>::put(last_key);
 
 			Ok(())
 		}
@@ -590,23 +627,27 @@ impl<T: Config> Pallet<T> {
 		let last_iterated_storage_key: StorageKey =
 			last_iterated_storage_key.try_into().map_err(|_| "Invalid key")?;
 
-		// only submit if there are updated balances
-		// we trust that API will only return updated balances
-		if updated_accounts.is_empty() {
-			return Ok(());
-		}
-
 		// check for each balance if it is updated
 		updated_accounts.retain(|(account, balance)| {
 			let current_balance = T::Currency::free_balance(account);
 			*balance != current_balance
 		});
 
+		// only submit if there are updated balances
+		// we trust that API will only return updated balances
+		if updated_accounts.is_empty() {
+			return Ok(());
+		}
+
 		// Actually send the extrinsic to the chain
-		let result = signer.send_signed_transaction(|_acct| Call::update_accounts_unsigned {
-			updated_accounts: updated_accounts.clone(),
-			last_iterated_storage_key: Some(last_iterated_storage_key.clone()),
-		});
+		let result = signer.send_unsigned_transaction(
+			|account| UpdateAccountsPayload {
+				public: account.public.clone(),
+				accounts: updated_accounts.clone(),
+				last_key: last_iterated_storage_key.clone(),
+			},
+			|payload, signature| Call::update_accounts_unsigned { payload, signature },
+		);
 
 		for (acc, res) in &result {
 			match res {
@@ -633,18 +674,17 @@ impl<T: Config> Pallet<T> {
 			accounts
 				.iter()
 				.map(|account| {
-					JsonValue::String(account.encode().into_iter().map(|x| x as char).collect())
+					JsonValue::String(hex::encode(account.encode()).chars().map(|x| x).collect())
 				})
 				.collect::<Vec<_>>()
 				.into(),
-		)
-		.serialize();
+		);
 
-		log::info!(target: "offchain-worker", "Body: {:?}", body);
+		log::info!(target: "offchain-worker", "Signing message body: {:?}", &body.serialize());
 
+		#[cfg(not(test))]
 		// sign the body of the request
-		let results = signer.sign_message(&body[..]);
-
+		let results = signer.sign_message(&body.serialize());
 		#[cfg(not(test))]
 		let signature = results[0].1.encode();
 
@@ -652,11 +692,21 @@ impl<T: Config> Pallet<T> {
 		#[cfg(test)]
 		let signature = MOCKED_SIGNATURE.to_vec();
 
+		let body = JsonValue::Object(vec![
+			("accounts".chars().into_iter().collect(), body),
+			(
+				"signature".chars().into_iter().collect(),
+				JsonValue::String(hex::encode(&signature[..]).chars().map(|x| x).collect()),
+			),
+		])
+		.serialize();
+		log::info!(target: "offchain-worker", "Body: {:?}", body);
+
 		// Form the request
 		let request = http::Request::new("http://localhost:3001/balances")
 			.method(http::Method::Post)
 			.deadline(deadline)
-			.body(vec![signature, body])
+			.body(vec![body])
 			.add_header("Content-Type", "application/json")
 			.add_header("accept", "*/*")
 			.send()
