@@ -118,7 +118,6 @@ impl crate::Config for Test {
 	type Currency = Balances;
 	type PalletAccount = PalletAccount;
 	type MaxStringSize = ConstU32<1024>;
-	type WeightToFee = IdentityFee<Balance>;
 	type OffchainWorkerInterval = ConstU64<2>;
 }
 

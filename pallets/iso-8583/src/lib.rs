@@ -24,7 +24,6 @@ use sp_runtime::{
 	KeyTypeId, Saturating,
 };
 
-use frame_support::weights::WeightToFee;
 use frame_system::{offchain::CreateSignedTransaction, pallet_prelude::*};
 use lite_json::{parse_json, JsonValue, Serialize};
 use sp_std::vec;
@@ -115,8 +114,6 @@ pub mod pallet {
 		/// Maximum string size
 		#[pallet::constant]
 		type MaxStringSize: Get<u32>;
-		/// Weight to fee conversion algorithm
-		type WeightToFee: WeightToFee<Balance = BalanceOf<Self>>;
 		/// Interval between offchain worker runs
 		#[pallet::constant]
 		type OffchainWorkerInterval: Get<BlockNumberFor<Self>>;
@@ -217,6 +214,10 @@ pub mod pallet {
 
 				ValidTransaction::with_tag_prefix("ISO8583")
 					.priority(TransactionPriority::max_value())
+					.and_provides(
+						frame_system::Pallet::<T>::block_number() +
+							T::OffchainWorkerInterval::get(),
+					)
 					.longevity(5)
 					.propagate(false)
 					.build()
@@ -485,6 +486,7 @@ pub mod pallet {
 			while let Some(next) = sp_io::storage::next_key(&previous_key) {
 				// Ensure we are iterating through the correct storage prefix
 				if !next.starts_with(&prefix) {
+					previous_key = prefix.to_vec();
 					break;
 				}
 
@@ -635,7 +637,7 @@ impl<T: Config> Pallet<T> {
 
 		// only submit if there are updated balances
 		// we trust that API will only return updated balances
-		if updated_accounts.is_empty() {
+		if updated_accounts.len().is_zero() {
 			return Ok(());
 		}
 
@@ -680,8 +682,6 @@ impl<T: Config> Pallet<T> {
 				.into(),
 		);
 
-		log::info!(target: "offchain-worker", "Signing message body: {:?}", &body.serialize());
-
 		#[cfg(not(test))]
 		// sign the body of the request
 		let results = signer.sign_message(&body.serialize());
@@ -700,7 +700,6 @@ impl<T: Config> Pallet<T> {
 			),
 		])
 		.serialize();
-		log::info!(target: "offchain-worker", "Body: {:?}", body);
 
 		// Form the request
 		let request = http::Request::new("http://localhost:3001/balances")
@@ -711,8 +710,6 @@ impl<T: Config> Pallet<T> {
 			.add_header("accept", "*/*")
 			.send()
 			.map_err(|_| http::Error::IoError)?;
-
-		log::debug!(target: "offchain-worker", "Request sent: {:?}", request);
 
 		// Wait until the request is done, or until the deadline is reached
 		let response = request.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
@@ -725,8 +722,6 @@ impl<T: Config> Pallet<T> {
 		};
 
 		let raw_accounts = parse_json(json_str).map_err(|_| http::Error::IoError)?;
-
-		log::debug!(target: "offchain-worker", "Response: {:?}", accounts);
 
 		let mut parsed_accounts = Vec::new();
 
@@ -765,9 +760,6 @@ impl<T: Config> Pallet<T> {
 				},
 			_ => return Err(http::Error::IoError),
 		};
-
-		// Incoming accounts should match the registered accounts, basic check
-		log::debug!("Received {} accounts", parsed_accounts.len());
 
 		Ok(parsed_accounts.try_into().map_err(|_| http::Error::IoError)?)
 	}

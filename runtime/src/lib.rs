@@ -7,7 +7,7 @@
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use codec::Encode;
-use frame_support::PalletId;
+use frame_support::{weights::WeightToFee, PalletId};
 use pallet_grandpa::AuthorityId as GrandpaId;
 use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
@@ -242,14 +242,23 @@ parameter_types! {
 	pub FeeMultiplier: Multiplier = Multiplier::one();
 }
 
-type WeightToFee = IdentityFee<Balance>;
+/// Implementor of `WeightToFee` that maps one unit of weight to one unit of fee.
+pub struct CustomWeightToFee;
+
+impl WeightToFee for CustomWeightToFee {
+	type Balance = Balance;
+
+	fn weight_to_fee(weight: &Weight) -> Self::Balance {
+		Self::Balance::saturated_from(weight.ref_time() / WEIGHT_REF_TIME_PER_SECOND * 1_000)
+	}
+}
 
 impl pallet_transaction_payment::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type OnChargeTransaction = CurrencyAdapter<Balances, ()>;
 	type OperationalFeeMultiplier = ConstU8<5>;
-	type WeightToFee = WeightToFee;
-	type LengthToFee = WeightToFee;
+	type WeightToFee = CustomWeightToFee;
+	type LengthToFee = CustomWeightToFee;
 	type FeeMultiplierUpdate = ConstFeeMultiplier<FeeMultiplier>;
 }
 
@@ -330,7 +339,6 @@ impl pallet_iso_8583::Config for Runtime {
 	type AuthorityId = pallet_iso_8583::crypto::Iso8583AuthId;
 	type PalletAccount = PalletAccount;
 	type MaxStringSize = ConstU32<1024>;
-	type WeightToFee = WeightToFee;
 	type OffchainWorkerInterval = OffchainWorkerInterval;
 }
 
