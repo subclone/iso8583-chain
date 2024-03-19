@@ -52,8 +52,6 @@ pub struct FinalisedTransaction<AccountId, Balance> {
 pub enum ISO8583Status {
 	/// Transaction is finalised
 	Approved,
-	/// Transaction is reverted
-	Reverted,
 	/// Failed
 	Failed(ISO8583FailureReason),
 }

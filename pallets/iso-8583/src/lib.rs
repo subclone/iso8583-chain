@@ -581,8 +581,7 @@ impl<T: Config> Pallet<T> {
 		let from = Self::ensure_registered(&transaction.from);
 		let to = Self::ensure_registered(&transaction.to);
 
-		// if this is a reversal transaction, we need to burn `amount` from the source account
-		// and deposit it to the destination account.
+		// we don't distinguish between transfer and reverse transactions
 		match transaction.status {
 			ISO8583Status::Approved => {
 				// this happens when accounts are not registered on-chain
@@ -594,14 +593,6 @@ impl<T: Config> Pallet<T> {
 					Self::transfer_from(&T::PalletAccount::get(), from, to, transaction.amount)?;
 				}
 			},
-			ISO8583Status::Reverted =>
-				if transaction.to == pallet_account {
-					let _ = T::Currency::slash(from, transaction.amount);
-				} else {
-					// unreserve funds and transfer
-					let _ = T::Currency::unreserve(to, transaction.amount);
-					Self::transfer_from(&T::PalletAccount::get(), from, to, transaction.amount)?;
-				},
 			_ => (),
 		}
 
