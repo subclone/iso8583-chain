@@ -289,6 +289,10 @@ pub mod pallet {
 					Allowances::<T>::get(&from, &who) >= amount,
 					Error::<T>::InsufficientAllowance
 				);
+				Allowances::<T>::try_mutate(&from, &who, |allowance| -> DispatchResult {
+					*allowance = allowance.saturating_sub(amount);
+					Ok(())
+				})?;
 			}
 
 			// self-transfer is no-op
