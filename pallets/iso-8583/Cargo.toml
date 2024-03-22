@@ -12,15 +12,26 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 codec = { workspace = true, package = "parity-scale-codec" }
+log = { workspace = true }
 scale-info = { workspace = true }
+sp-core = { workspace = true }
 frame-benchmarking = { workspace = true, optional = true }
 frame-support = { workspace = true }
 frame-system = { workspace = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
+sp-io = { workspace = true }
+
+# JSON no-std support
+lite-json = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
-sp-core = { workspace = true }
-sp-io = { workspace = true }
-sp-runtime = { workspace = true }
+sp-runtime = { workspace = true, features = ["std"] }
+pallet-balances = { workspace = true, features = ["std", "insecure_zero_ed"] }
+pallet-timestamp = { workspace = true, features = ["std"] }
+sp-keystore = { workspace = true, features = ["std"] }
+hex = { version = "0.4", features = ["serde"] }
 
 [features]
 default = ["std"]
@@ -30,6 +41,14 @@ std = [
 	"frame-support/std",
 	"frame-system/std",
 	"scale-info/std",
+	"sp-core/std",
+	"sp-runtime/std",
+	"sp-std/std",
+	"lite-json/std",
+	"log/std"
 ]
-runtime-benchmarks = ["frame-benchmarking/runtime-benchmarks"]
+runtime-benchmarks = [
+	"frame-benchmarking",
+	"frame-support/runtime-benchmarks",
+]
 try-runtime = ["frame-support/try-runtime"]

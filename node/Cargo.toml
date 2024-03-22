@@ -1,5 +1,5 @@
 [package]
-name = "iso-8583-chain"
+name = "iso8583-chain"
 version = "0.0.1"
 description = "A Substrate node, ready for hacking."
 build = "build.rs"
@@ -12,7 +12,7 @@ repository.workspace = true
 targets = ["x86_64-unknown-linux-gnu"]
 
 [[bin]]
-name = "iso-8583-chain"
+name = "iso8583-chain"
 
 [dependencies]
 clap = { workspace = true }
@@ -35,7 +35,7 @@ sc-consensus-grandpa = { workspace = true }
 sp-consensus-grandpa = { workspace = true, features = ["std"] }
 sc-client-api = { workspace = true }
 sp-runtime = { workspace = true, features = ["std"] }
-sp-io = { workspace = true }
+sp-io = { workspace = true, features = ["std"] }
 sp-timestamp = { workspace = true }
 sp-inherents = { workspace = true, features = ["std"] }
 sp-keyring = { workspace = true }
@@ -76,3 +76,4 @@ runtime-benchmarks = [
 # Enable features that allow the runtime to be tried and debugged. Name might be subject to change
 # in the near future.
 try-runtime = ["iso-8583-runtime/try-runtime", "try-runtime-cli/try-runtime"]
+docker = []
