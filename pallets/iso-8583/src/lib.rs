@@ -466,6 +466,19 @@ pub mod pallet {
 
 			Ok(())
 		}
+
+		/// Set payment processor url
+		///
+		/// This function is used to set the payment processor url.
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::call_index(9)]
+		pub fn set_payment_processor_url(origin: OriginFor<T>, url: StorageKey) -> DispatchResult {
+			ensure_root(origin)?;
+
+			PaymentProcessorUrl::<T>::put(url);
+
+			Ok(())
+		}
 	}
 
 	#[pallet::hooks]

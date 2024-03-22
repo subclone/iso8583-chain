@@ -24,6 +24,19 @@ cargo build --release
 ./target/release/iso8583-chain --dev --tmp -loffchain-worker
 ```
 
+Docker:
+
+```bash
+# Ready to use docker image
+docker run -it -p 9944:9944 kingleard/iso8583-chain --dev --tmp --unsafe-rpc-external --rpc-cors=all --rpc-methods=unsafe -loffchain-worker
+
+# Build docker image
+docker build -t iso8583-chain .
+
+# Run docker image
+docker run -it -p 9944:9944 iso8583-chain --dev --tmp --unsafe-rpc-external --rpc-cors=all --rpc-methods=unsafe -loffchain-worker
+```
+
 ### Offchain Worker
 
 First and foremost, insert the offchain worker key by running this command:
@@ -55,10 +68,4 @@ cargo tarpaulin --workspace --all-features
 
 This is the high-level overview of components and how they interact:
 
-![iso-8583-overview](https://github.com/subclone/payment-processor/assets/88332432/01c97bed-2ec8-4041-9702-cf079477e9be)
-
-```rs
-cargo build -r
-
-./target/release/iso8583-chain --dev --tmp
-```
+![iso-8583-overview](https://github.com/subclone/payment-processor/assets/88332432/939a8e5c-0b2e-4735-b0f4-003726008248)

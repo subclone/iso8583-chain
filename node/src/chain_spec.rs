@@ -169,7 +169,7 @@ fn testnet_genesis(
 					.expect("valid account; qed"),
 			],
 			#[cfg(feature = "docker")]
-			payment_processor_url: b"http://host.docker.internal:3001".to_vec(),
+			payment_processor_url: b"http://server:3001".to_vec(),
 			#[cfg(not(feature = "docker"))]
 			payment_processor_url: b"http://localhost:3001".to_vec(),
 		},
