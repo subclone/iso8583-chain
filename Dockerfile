@@ -8,7 +8,8 @@ WORKDIR /app
 COPY . .
 
 # Build the substrate node
-RUN cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \ 
+    cargo build --release --locked --features docker
 
 # Use a smaller base image for the final image
 FROM debian:bullseye-slim

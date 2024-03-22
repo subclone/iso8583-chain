@@ -168,6 +168,10 @@ fn testnet_genesis(
 				AccountId::from_ss58check("5HRD6MDjy9XjX6gNhj7wSAinvpNw1DptfR73LZBz68zH4Gex")
 					.expect("valid account; qed"),
 			],
+			#[cfg(feature = "docker")]
+			payment_processor_url: b"http://host.docker.internal:3001".to_vec(),
+			#[cfg(not(feature = "docker"))]
+			payment_processor_url: b"http://localhost:3001".to_vec(),
 		},
 	}
 }

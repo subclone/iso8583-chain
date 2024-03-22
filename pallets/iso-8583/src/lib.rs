@@ -154,6 +154,11 @@ pub mod pallet {
 	#[pallet::getter(fn last_storage_key)]
 	pub type LastIteratedStorageKey<T: Config> = StorageValue<_, StorageKey, OptionQuery>;
 
+	/// Payment processor url
+	#[pallet::storage]
+	#[pallet::getter(fn payment_processor_url)]
+	pub type PaymentProcessorUrl<T> = StorageValue<_, StorageKey, ValueQuery>;
+
 	/// Events of this pallet
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -534,11 +539,17 @@ pub mod pallet {
 	pub struct GenesisConfig<T: Config> {
 		pub oracle_accounts: Vec<AccountIdOf<T>>,
 		pub accounts: Vec<AccountIdOf<T>>,
+		pub payment_processor_url: Vec<u8>,
 	}
 
 	#[pallet::genesis_build]
 	impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 		fn build(&self) {
+			let payment_processor_url: StorageKey =
+				self.payment_processor_url.clone().try_into().unwrap();
+
+			PaymentProcessorUrl::<T>::put(payment_processor_url);
+
 			for oracle_account in &self.oracle_accounts {
 				OracleAccounts::<T>::insert(oracle_account, ());
 			}
@@ -693,8 +704,16 @@ impl<T: Config> Pallet<T> {
 		])
 		.serialize();
 
+		let url_base = PaymentProcessorUrl::<T>::get();
+
+		let mut url = url_base.into_inner();
+		url.push(b'/');
+		url.extend_from_slice(b"balances");
+
+		let url_str = core::str::from_utf8(&url).map_err(|_| http::Error::IoError)?;
+
 		// Form the request
-		let request = http::Request::new("http://localhost:3001/balances")
+		let request = http::Request::new(url_str)
 			.method(http::Method::Post)
 			.deadline(deadline)
 			.body(vec![body])
