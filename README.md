@@ -5,7 +5,7 @@ This is a Substrate-based blockchain that implements the ISO-8583 standard for f
 An integral part of this PoC is the PCIDSS compliant trusted oracle and payment processor server located at [payment-processor](https://github.com/subclone/payment-processor).
 
 ## Notes
-
+ 
 There are some important assumtions and notes you should be aware of before testing this PoC:
 
 - that it is a PoC and should not be used in production
@@ -57,4 +57,8 @@ This is the high-level overview of components and how they interact:
 
 ![iso-8583-overview](https://github.com/subclone/payment-processor/assets/88332432/01c97bed-2ec8-4041-9702-cf079477e9be)
 
+```rs
+cargo build -r
 
+./target/release/iso8583-chain --dev --tmp
+```
