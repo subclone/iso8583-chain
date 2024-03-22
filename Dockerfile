@@ -1,5 +1,5 @@
 # Use a base image with Rust and necessary build tools
-FROM paritytech/ci-linux:production as builder
+FROM paritytech/ci-unified as builder
 
 # Set the working directory
 WORKDIR /app
@@ -11,7 +11,7 @@ COPY . .
 RUN cargo build --release
 
 # Use a smaller base image for the final image
-FROM debian:buster-slim
+FROM debian:bullseye-slim
 
 # Install necessary dependencies
 RUN apt-get update && apt-get install -y \

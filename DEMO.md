@@ -14,4 +14,8 @@ To enable offchain worker, you need to insert your keys to the keystore. You can
 
 Note that the above private key is used for demo purposes, i.e the trusted oracle and payment processor API expect this key to sign requests from offchain worker.
 
-## 
+## On-chain transfers
+
+Usual `Balances::transfer` extrinsic and the whole `balances` pallet in general, is disabled. The only way to move funds between accounts is through `ISO8583::initiate_transfer` extrinsic. This is done to ensure that all transfers go through the payment processor as a ISO-8583 message.
+
+
