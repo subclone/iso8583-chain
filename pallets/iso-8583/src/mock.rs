@@ -1,7 +1,7 @@
 //! Mock runtime for tests
 
 use crate::crypto;
-use frame_support::{parameter_types, traits::Everything, weights::IdentityFee, PalletId};
+use frame_support::{parameter_types, traits::Everything, PalletId};
 use pallet_balances::AccountData;
 use sp_core::{sr25519::Signature, ConstU128, ConstU32, ConstU64, Pair, Public, H256};
 use sp_runtime::{
@@ -10,7 +10,7 @@ use sp_runtime::{
 		AccountIdConversion, BlakeTwo256, Extrinsic as ExtrinsicT, IdentifyAccount, IdentityLookup,
 		Verify,
 	},
-	BuildStorage, MultiSignature,
+	BuildStorage,
 };
 
 type Block = frame_system::mocking::MockBlock<Test>;

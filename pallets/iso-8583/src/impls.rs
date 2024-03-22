@@ -25,7 +25,7 @@ impl<T: Config> ERC20R<AccountIdOf<T>, BalanceOf<T>> for Pallet<T> {
 		// Pallet account has unlimited allowance for all accounts and transfering from self is
 		// allowed
 		if &T::PalletAccount::get() == spender || from == spender {
-			CurrencyOf::<T>::transfer(&from, &to, value, ExistenceRequirement::KeepAlive)?;
+			CurrencyOf::<T>::transfer(from, to, value, ExistenceRequirement::KeepAlive)?;
 			Ok(())
 		} else {
 			Allowances::<T>::try_mutate_exists(
@@ -66,12 +66,16 @@ pub(crate) struct BalanceDecoder<T: Config>(sp_std::marker::PhantomData<T>);
 
 impl<T: Config> TryConvert<&JsonValue, BalanceOf<T>> for BalanceDecoder<T> {
 	fn try_convert(json: &JsonValue) -> Result<BalanceOf<T>, &JsonValue> {
+		// Assumptions:
+		// - The number is a valid JSON number.
+		// - It is a `JsonValue::NumberValue` variant.
+		// - 6 decimals of the token.
 		json.clone()
 			.to_number()
 			.map(|num| {
-				let value_1 = num.integer as u128 * 10_u128.pow(num.exponent as u32 + 2);
+				let value_1 = num.integer as u128 * 10_u128.pow(num.exponent as u32 + 6);
 				let value_2 = num.fraction as u128 *
-					10_u128.pow(num.exponent as u32 + 2 - num.fraction_length);
+					10_u128.pow(num.exponent as u32 + 6 - num.fraction_length);
 				(value_1 + value_2).saturated_into()
 			})
 			.ok_or(json)
@@ -91,7 +95,7 @@ impl<T: Config> TryConvert<&JsonValue, AccountIdOf<T>> for AccountIdDecoder<T> {
 			.map(|c| *c as u8)
 			.collect::<Vec<u8>>();
 
-		let decoded_bytes = hex::decode(&account_id_str).map_err(|_| json)?;
+		let decoded_bytes = hex::decode(account_id_str).map_err(|_| json)?;
 
 		AccountIdOf::<T>::decode(&mut &decoded_bytes[..]).map_err(|_| json)
 	}
@@ -99,11 +103,39 @@ impl<T: Config> TryConvert<&JsonValue, AccountIdOf<T>> for AccountIdDecoder<T> {
 
 #[cfg(test)]
 mod tests {
-	use lite_json::JsonValue;
+	use lite_json::{parse_json, JsonValue};
 	use sp_core::sr25519;
 	use sp_runtime::traits::TryConvert;
 
 	use crate::mock::{get_account_id_from_seed, ExtBuilder};
+
+	const UNIT: u128 = 1_000_000;
+
+	#[test]
+	fn test_balance_decoder() {
+		ExtBuilder::default().build().execute_with(|| {
+			let raw_str = r#"{"balance":1}"#;
+
+			let json_val = parse_json(raw_str).unwrap();
+
+			let balance = super::BalanceDecoder::<crate::mock::Test>::try_convert(
+				&json_val.to_object().unwrap()[0].1,
+			)
+			.unwrap();
+			assert_eq!(balance, UNIT);
+
+			let raw_str = r#"{"balance":1.5}"#;
+
+			let json_val = parse_json(raw_str).unwrap();
+
+			let balance = super::BalanceDecoder::<crate::mock::Test>::try_convert(
+				&json_val.to_object().unwrap()[0].1,
+			)
+			.unwrap();
+
+			assert_eq!(balance, UNIT + UNIT / 2);
+		});
+	}
 
 	#[test]
 	fn account_id_decoder_works() {

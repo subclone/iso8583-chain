@@ -1,11 +1,10 @@
 //! Tests for the ISO-8583 pallet.
 
-use codec::Encode;
+use crate::{mock::*, types::FinalisedTransaction, Error};
+use codec::{Decode, Encode};
 use frame_support::{assert_noop, assert_ok};
 use sp_core::H256;
 use sp_runtime::DispatchError;
-
-use crate::{mock::*, types::FinalisedTransaction, Error};
 
 const PHRASE: &str = "news slush supreme milk chapter athlete soap sausage put clutch what kitten";
 /// Mocked signature
@@ -17,8 +16,11 @@ pub(crate) const MOCKED_SIGNATURE: [u8; 64] = [
 ];
 
 mod extrinsics {
+	use frame_system::offchain::SigningTypes;
 	use sp_keystore::{testing::MemoryKeystore, Keystore, KeystoreExt};
 	use sp_runtime::RuntimeAppPublic;
+
+	use crate::{types::UpdateAccountsPayload, OracleAccounts};
 
 	use super::*;
 
@@ -177,7 +179,7 @@ mod extrinsics {
 	}
 
 	#[test]
-	fn test_submit_finalities() {
+	fn test_submit_finality_works() {
 		ExtBuilder::default()
 			.with_oracle_accounts(vec![1, 2])
 			.with_accounts(vec![3, 4, 5])
@@ -224,8 +226,7 @@ mod extrinsics {
 				// event is emitted
 				System::assert_has_event(RuntimeEvent::ISO8583(
 					crate::Event::<Test>::ProcessedTransaction {
-						event_id: finalised_transaction_mint.event_id,
-						status: finalised_transaction_mint.status,
+						transaction: finalised_transaction_mint.clone(),
 					},
 				));
 
@@ -262,8 +263,7 @@ mod extrinsics {
 				// event is emitted
 				System::assert_has_event(RuntimeEvent::ISO8583(
 					crate::Event::<Test>::ProcessedTransaction {
-						event_id: finalised_transaction_transfer.event_id.clone(),
-						status: finalised_transaction_transfer.status.clone(),
+						transaction: finalised_transaction_transfer.clone(),
 					},
 				));
 
@@ -315,26 +315,56 @@ mod extrinsics {
 			// set block to 1, to read events
 			System::set_block_number(1);
 
-			// only ocw account can update accounts
-			assert_noop!(
-				ISO8583::update_accounts_unsigned(
-					RuntimeOrigin::signed(account(255)),
-					vec![(account(123), 100_110_000), (account(125), 125_250_000)]
-						.try_into()
-						.unwrap(),
-					None,
-				),
-				DispatchError::BadOrigin
-			);
-
 			// update accounts
 			assert_ok!(ISO8583::update_accounts_unsigned(
 				RuntimeOrigin::none(),
-				vec![(account(123), 100_110_000), (account(125), 125_250_000)]
-					.try_into()
+				UpdateAccountsPayload {
+					public: account(123),
+					accounts: vec![(account(123), 100_110_000), (account(125), 125_250_000)]
+						.try_into()
+						.unwrap(),
+					last_key: vec![].try_into().unwrap(),
+				},
+				<Test as SigningTypes>::Signature::decode(&mut MOCKED_SIGNATURE.as_slice())
 					.unwrap(),
-				None,
 			));
+		});
+	}
+
+	#[test]
+	fn test_register_oracle_works() {
+		ExtBuilder::default().with_oracle_accounts(vec![1]).build().execute_with(|| {
+			// set block to 1, to read events
+			System::set_block_number(1);
+
+			// only sudo can register
+			assert_noop!(
+				ISO8583::register_oracle(RuntimeOrigin::signed(account(255)), account(1)),
+				DispatchError::BadOrigin
+			);
+
+			// register oracle
+			assert_ok!(ISO8583::register_oracle(RuntimeOrigin::root(), account(1)));
+		});
+	}
+
+	#[test]
+	fn test_remove_oracle() {
+		ExtBuilder::default().with_oracle_accounts(vec![1]).build().execute_with(|| {
+			// set block to 1, to read events
+			System::set_block_number(1);
+
+			// only sudo can remove
+			assert_noop!(
+				ISO8583::remove_oracle(RuntimeOrigin::signed(account(255)), account(1)),
+				DispatchError::BadOrigin
+			);
+
+			// remove oracle
+			assert_ok!(ISO8583::remove_oracle(RuntimeOrigin::root(), account(1)));
+
+			// oracle is removed
+			assert!(!<OracleAccounts<Test>>::contains_key(account(1)));
 		});
 	}
 }
@@ -451,28 +481,6 @@ mod offchain_worker {
 	use sp_keystore::{testing::MemoryKeystore, Keystore, KeystoreExt};
 	use sp_runtime::RuntimeAppPublic;
 
-	/// Indent the body of the request.
-	///
-	/// simply adds opening and closing brackets and newlines to the body.
-	fn mock_request(accounts: Vec<u8>) -> Vec<u8> {
-		let mut full = Vec::new();
-
-		full.push('[' as u8);
-
-		for index in accounts {
-			full.push('"' as u8);
-			full.extend_from_slice(&account(index).encode()[..]);
-			full.push('"' as u8);
-			full.push(',' as u8);
-		}
-
-		// remove the last comma
-		full.pop();
-		full.push(']' as u8);
-
-		full
-	}
-
 	fn mock_response(accounts: Vec<(u8, f64)>) -> Vec<u8> {
 		JsonValue::Array(
 			accounts
@@ -480,25 +488,22 @@ mod offchain_worker {
 				.map(|(id, balance)| {
 					JsonValue::Object(vec![
 						(
-							"account_id".to_string().chars().into_iter().collect(),
-							JsonValue::String(
-								account(*id).encode().into_iter().map(|v| v as char).collect(),
-							),
+							"accountId".to_string().chars().collect(),
+							JsonValue::String(hex::encode(account(*id).encode()).chars().collect()),
 						),
 						(
-							"balance".to_string().chars().into_iter().collect(),
+							"balance".to_string().chars().collect(),
 							JsonValue::Number(NumberValue {
 								integer: balance.trunc() as u64,
 								fraction: (balance.fract() * 100.0).ceil() as u64,
 								fraction_length: 2,
-								exponent: 4,
+								exponent: 6,
 								negative: false,
 							}),
 						),
 					])
 				})
-				.collect::<Vec<_>>()
-				.into(),
+				.collect::<Vec<_>>(),
 		)
 		.serialize()
 	}
@@ -527,9 +532,20 @@ mod offchain_worker {
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
-			let body = mock_request(vec![123]);
-			let mut signature = MOCKED_SIGNATURE.to_vec();
-			signature.extend(body);
+			let body = vec![
+				123, 34, 97, 99, 99, 111, 117, 110, 116, 115, 34, 58, 91, 34, 55, 98, 55, 98, 55,
+				98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98,
+				55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55,
+				98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 34, 93, 44, 34,
+				115, 105, 103, 110, 97, 116, 117, 114, 101, 34, 58, 34, 99, 48, 53, 100, 54, 50,
+				100, 101, 48, 51, 100, 55, 102, 52, 50, 102, 51, 53, 99, 52, 52, 101, 48, 101, 101,
+				56, 51, 48, 50, 54, 53, 55, 102, 51, 100, 50, 49, 50, 102, 57, 50, 54, 56, 55, 98,
+				54, 101, 102, 49, 100, 48, 99, 99, 99, 102, 54, 55, 101, 102, 50, 57, 52, 55, 49,
+				57, 98, 53, 99, 57, 50, 55, 53, 97, 53, 57, 99, 102, 52, 53, 98, 50, 101, 51, 101,
+				101, 48, 57, 57, 50, 100, 52, 101, 55, 57, 97, 100, 100, 54, 49, 52, 51, 54, 52,
+				56, 98, 98, 50, 57, 52, 100, 49, 100, 54, 55, 102, 49, 50, 99, 48, 53, 101, 101,
+				97, 98, 48, 53, 56, 97, 34, 125,
+			];
 
 			let response = mock_response(vec![(123, 100.11)]);
 
@@ -537,7 +553,7 @@ mod offchain_worker {
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: signature,
+				body,
 				response: Some(response),
 				sent: true,
 				headers: vec![
@@ -551,7 +567,7 @@ mod offchain_worker {
 		// skip to block `OffchainWorkerInterval`
 		t.execute_with(|| {
 			let parsed_accounts: AccountsOf<Test> =
-				vec![(account(123), 100_110_000)].try_into().unwrap();
+				vec![(account(123), 100110000000000)].try_into().unwrap();
 			assert_eq!(
 				ISO8583::fetch_balances(&signer, vec![account(123)]).unwrap(),
 				parsed_accounts
@@ -577,9 +593,24 @@ mod offchain_worker {
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
-			let body = mock_request(vec![123, 125]);
-			let mut payload = MOCKED_SIGNATURE.to_vec();
-			payload.extend(body);
+			let body = vec![
+				123, 34, 97, 99, 99, 111, 117, 110, 116, 115, 34, 58, 91, 34, 55, 98, 55, 98, 55,
+				98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98,
+				55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55,
+				98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 34, 44, 34, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 34, 93, 44, 34, 115, 105, 103, 110, 97,
+				116, 117, 114, 101, 34, 58, 34, 99, 48, 53, 100, 54, 50, 100, 101, 48, 51, 100, 55,
+				102, 52, 50, 102, 51, 53, 99, 52, 52, 101, 48, 101, 101, 56, 51, 48, 50, 54, 53,
+				55, 102, 51, 100, 50, 49, 50, 102, 57, 50, 54, 56, 55, 98, 54, 101, 102, 49, 100,
+				48, 99, 99, 99, 102, 54, 55, 101, 102, 50, 57, 52, 55, 49, 57, 98, 53, 99, 57, 50,
+				55, 53, 97, 53, 57, 99, 102, 52, 53, 98, 50, 101, 51, 101, 101, 48, 57, 57, 50,
+				100, 52, 101, 55, 57, 97, 100, 100, 54, 49, 52, 51, 54, 52, 56, 98, 98, 50, 57, 52,
+				100, 49, 100, 54, 55, 102, 49, 50, 99, 48, 53, 101, 101, 97, 98, 48, 53, 56, 97,
+				34, 125,
+			];
 
 			let response = mock_response(vec![(123, 100.11), (125, 125.25)]);
 
@@ -587,7 +618,7 @@ mod offchain_worker {
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: payload,
+				body,
 				response: Some(response),
 				sent: true,
 				headers: vec![
@@ -606,19 +637,22 @@ mod offchain_worker {
 			let tx = pool_state.write().transactions.pop().unwrap();
 			assert!(pool_state.read().transactions.is_empty());
 			let tx = crate::mock::Extrinsic::decode(&mut &tx[..]).unwrap();
-			// assert_eq!(tx.signature.unwrap().0, account(123));
-			assert_eq!(
-				tx.call,
+
+			match tx.call {
 				RuntimeCall::ISO8583(crate::Call::update_accounts_unsigned {
-					updated_accounts: vec![
-						(account(123), 100_110_000),
-						(account(125), 125_250_000)
-					]
-					.try_into()
-					.unwrap(),
-					last_iterated_storage_key: Some(vec![].try_into().unwrap())
-				})
-			);
+					payload,
+					signature: _signature,
+				}) => {
+					let expected_accounts: AccountsOf<Test> =
+						vec![(account(123), 100110000000000), (account(125), 125250000000000)]
+							.try_into()
+							.unwrap();
+
+					assert_eq!(payload.accounts, expected_accounts);
+					assert_eq!(payload.public, crate::crypto::Public::all()[0].clone().into());
+				},
+				_ => panic!("unexpected call"),
+			}
 		});
 	}
 
@@ -646,9 +680,24 @@ mod offchain_worker {
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
-			let body = mock_request(vec![125, 123]);
-			let mut payload = MOCKED_SIGNATURE.to_vec();
-			payload.extend(body);
+			let body = vec![
+				123, 34, 97, 99, 99, 111, 117, 110, 116, 115, 34, 58, 91, 34, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 34, 44, 34, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98,
+				55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55,
+				98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98,
+				55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 34, 93, 44, 34, 115, 105, 103, 110, 97,
+				116, 117, 114, 101, 34, 58, 34, 99, 48, 53, 100, 54, 50, 100, 101, 48, 51, 100, 55,
+				102, 52, 50, 102, 51, 53, 99, 52, 52, 101, 48, 101, 101, 56, 51, 48, 50, 54, 53,
+				55, 102, 51, 100, 50, 49, 50, 102, 57, 50, 54, 56, 55, 98, 54, 101, 102, 49, 100,
+				48, 99, 99, 99, 102, 54, 55, 101, 102, 50, 57, 52, 55, 49, 57, 98, 53, 99, 57, 50,
+				55, 53, 97, 53, 57, 99, 102, 52, 53, 98, 50, 101, 51, 101, 101, 48, 57, 57, 50,
+				100, 52, 101, 55, 57, 97, 100, 100, 54, 49, 52, 51, 54, 52, 56, 98, 98, 50, 57, 52,
+				100, 49, 100, 54, 55, 102, 49, 50, 99, 48, 53, 101, 101, 97, 98, 48, 53, 56, 97,
+				34, 125,
+			];
 
 			let response = mock_response(vec![(125, 125.25), (123, 100.11)]);
 
@@ -656,7 +705,7 @@ mod offchain_worker {
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: payload,
+				body,
 				response: Some(response),
 				sent: true,
 				headers: vec![
@@ -673,38 +722,46 @@ mod offchain_worker {
 			let tx = pool_state.write().transactions.pop().unwrap();
 			assert!(pool_state.read().transactions.is_empty());
 			let tx = crate::mock::Extrinsic::decode(&mut &tx[..]).unwrap();
-			assert_eq!(
-				tx.call,
+
+			match tx.call {
 				RuntimeCall::ISO8583(crate::Call::update_accounts_unsigned {
-					updated_accounts: vec![
-						(account(125), 125_250_000),
-						(account(123), 100_110_000)
-					]
-					.try_into()
-					.unwrap(),
-					last_iterated_storage_key: Some(
-						vec![
-							154, 237, 128, 107, 236, 245, 7, 140, 126, 24, 139, 0, 248, 2, 43, 16,
-							142, 231, 65, 138, 101, 49, 23, 61, 96, 209, 246, 168, 45, 143, 77, 81,
-							255, 208, 58, 29, 34, 171, 170, 249, 207, 18, 242, 36, 206, 63, 124,
-							149, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123,
-							123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123, 123,
-							123, 123, 123, 123, 123
-						]
-						.try_into()
-						.unwrap()
-					)
-				})
-			);
+					payload,
+					signature: _signature,
+				}) => {
+					let expected_accounts: AccountsOf<Test> =
+						vec![(account(125), 125250000000000), (account(123), 100110000000000)]
+							.try_into()
+							.unwrap();
+
+					assert_eq!(payload.accounts, expected_accounts);
+					assert_eq!(payload.public, crate::crypto::Public::all()[0].clone().into());
+				},
+				_ => panic!("unexpected call"),
+			}
 		});
 
 		{
 			let mut state = state.write();
 			assert_eq!(state.requests.len(), 0);
 
-			let body = mock_request(vec![125, 123]);
-			let mut payload = MOCKED_SIGNATURE.to_vec();
-			payload.extend(body);
+			let body = vec![
+				123, 34, 97, 99, 99, 111, 117, 110, 116, 115, 34, 58, 91, 34, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55, 100, 55,
+				100, 55, 100, 55, 100, 34, 44, 34, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98,
+				55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55,
+				98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 55, 98,
+				55, 98, 55, 98, 55, 98, 55, 98, 55, 98, 34, 93, 44, 34, 115, 105, 103, 110, 97,
+				116, 117, 114, 101, 34, 58, 34, 99, 48, 53, 100, 54, 50, 100, 101, 48, 51, 100, 55,
+				102, 52, 50, 102, 51, 53, 99, 52, 52, 101, 48, 101, 101, 56, 51, 48, 50, 54, 53,
+				55, 102, 51, 100, 50, 49, 50, 102, 57, 50, 54, 56, 55, 98, 54, 101, 102, 49, 100,
+				48, 99, 99, 99, 102, 54, 55, 101, 102, 50, 57, 52, 55, 49, 57, 98, 53, 99, 57, 50,
+				55, 53, 97, 53, 57, 99, 102, 52, 53, 98, 50, 101, 51, 101, 101, 48, 57, 57, 50,
+				100, 52, 101, 55, 57, 97, 100, 100, 54, 49, 52, 51, 54, 52, 56, 98, 98, 50, 57, 52,
+				100, 49, 100, 54, 55, 102, 49, 50, 99, 48, 53, 101, 101, 97, 98, 48, 53, 56, 97,
+				34, 125,
+			];
 
 			let response = mock_response(vec![]);
 
@@ -712,7 +769,7 @@ mod offchain_worker {
 			state.expect_request(testing::PendingRequest {
 				method: "POST".into(),
 				uri: "http://localhost:3001/balances".into(),
-				body: payload,
+				body,
 				response: Some(response),
 				sent: true,
 				headers: vec![

@@ -165,7 +165,7 @@ pub mod pallet {
 		/// Deduct funds from account: slashing, transaction fee, etc.
 		DeductFunds { who: T::AccountId, amount: BalanceOf<T> },
 		/// Processed transaction by the oracle gateway
-		ProcessedTransaction { event_id: EventId, status: ISO8583Status },
+		ProcessedTransaction { transaction: FinalisedTransactionOf<T> },
 		/// Account was registered
 		/// This event is emitted when an account is registered by the oracle/s;
 		AccountRegistered { account: T::AccountId, initial_balance: BalanceOf<T> },
@@ -242,7 +242,13 @@ pub mod pallet {
 		/// account to the destination account.
 		///
 		/// # Errors
-		#[pallet::weight(T::DbWeight::get().writes(0))]
+		///
+		/// - If the origin is not an oracle account.
+		///
+		/// # Weight
+		///
+		/// - `O(1)`
+		#[pallet::weight(T::DbWeight::get().reads_writes(3, 2))]
 		#[pallet::call_index(0)]
 		pub fn submit_finality(
 			origin: OriginFor<T>,
@@ -252,10 +258,7 @@ pub mod pallet {
 
 			Self::process_finalised_transaction(&transaction)?;
 
-			Self::deposit_event(Event::<T>::ProcessedTransaction {
-				event_id: transaction.event_id,
-				status: transaction.status,
-			});
+			Self::deposit_event(Event::<T>::ProcessedTransaction { transaction });
 
 			Ok(())
 		}
@@ -268,7 +271,7 @@ pub mod pallet {
 		/// # Errors
 		///
 		/// Transfer will fail if source and destination accounts are not registered in the oracle.
-		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::weight(T::DbWeight::get().reads_writes(3, 2))]
 		#[pallet::call_index(1)]
 		pub fn initiate_transfer(
 			origin: OriginFor<T>,
@@ -299,7 +302,7 @@ pub mod pallet {
 			Self::deposit_event(Event::<T>::InitiateTransfer {
 				from: from.clone(),
 				to: to.clone(),
-				amount: amount.clone(),
+				amount,
 			});
 
 			Ok(())
@@ -318,7 +321,7 @@ pub mod pallet {
 		pub fn initiate_revert(origin: OriginFor<T>, hash: T::Hash) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
-			Self::deposit_event(Event::<T>::InitiateRevert { who, hash: hash.clone() });
+			Self::deposit_event(Event::<T>::InitiateRevert { who, hash });
 
 			Ok(())
 		}
@@ -326,7 +329,7 @@ pub mod pallet {
 		/// Give allowance to an account
 		///
 		/// Any account can give allowance to any other account.
-		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::weight(T::DbWeight::get().reads_writes(3, 2))]
 		#[pallet::call_index(3)]
 		pub fn approve(
 			origin: OriginFor<T>,
@@ -351,7 +354,7 @@ pub mod pallet {
 		/// Register an account
 		///
 		/// This function is used by the oracle gateway to register an account.
-		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::weight(T::DbWeight::get().reads_writes(2, 2))]
 		#[pallet::call_index(4)]
 		pub fn register(
 			origin: OriginFor<T>,
@@ -374,7 +377,7 @@ pub mod pallet {
 		///
 		/// This function is used by the oracle gateway to remove an account. Oracle can remove
 		/// accounts that are not honest or have been compromised.
-		#[pallet::weight(T::DbWeight::get().writes(1))]
+		#[pallet::weight(T::DbWeight::get().reads_writes(1, 1))]
 		#[pallet::call_index(5)]
 		pub fn remove(origin: OriginFor<T>, account: AccountIdOf<T>) -> DispatchResult {
 			Self::ensure_oracle(origin)?;
@@ -389,7 +392,7 @@ pub mod pallet {
 		/// Submit updated balances
 		///
 		/// This function is used by the offchain worker to submit updated balances to the chain.
-		#[pallet::weight(T::DbWeight::get().writes(payload.accounts.len() as u64 + 1))]
+		#[pallet::weight(T::DbWeight::get().reads_writes(payload.accounts.len() as u64, payload.accounts.len() as u64 + 1))]
 		#[pallet::call_index(6)]
 		pub fn update_accounts_unsigned(
 			origin: OriginFor<T>,
@@ -582,18 +585,15 @@ impl<T: Config> Pallet<T> {
 		let to = Self::ensure_registered(&transaction.to);
 
 		// we don't distinguish between transfer and reverse transactions
-		match transaction.status {
-			ISO8583Status::Approved => {
-				// this happens when accounts are not registered on-chain
-				if transaction.from == pallet_account {
-					let _ = T::Currency::deposit_creating(to, transaction.amount);
-				} else {
-					// unreserve funds and transfer
-					let _ = T::Currency::unreserve(from, transaction.amount);
-					Self::transfer_from(&T::PalletAccount::get(), from, to, transaction.amount)?;
-				}
-			},
-			_ => (),
+		if transaction.status == ISO8583Status::Approved {
+			// this happens when accounts are not registered on-chain
+			if transaction.from == pallet_account {
+				let _ = T::Currency::deposit_creating(to, transaction.amount);
+			} else {
+				// unreserve funds and transfer
+				let _ = T::Currency::unreserve(from, transaction.amount);
+				Self::transfer_from(&T::PalletAccount::get(), from, to, transaction.amount)?;
+			}
 		}
 
 		Ok(())
@@ -666,11 +666,8 @@ impl<T: Config> Pallet<T> {
 		let body = JsonValue::Array(
 			accounts
 				.iter()
-				.map(|account| {
-					JsonValue::String(hex::encode(account.encode()).chars().map(|x| x).collect())
-				})
-				.collect::<Vec<_>>()
-				.into(),
+				.map(|account| JsonValue::String(hex::encode(account.encode()).chars().collect()))
+				.collect::<Vec<_>>(),
 		);
 
 		#[cfg(not(test))]
@@ -684,10 +681,10 @@ impl<T: Config> Pallet<T> {
 		let signature = MOCKED_SIGNATURE.to_vec();
 
 		let body = JsonValue::Object(vec![
-			("accounts".chars().into_iter().collect(), body),
+			("accounts".chars().collect(), body),
 			(
-				"signature".chars().into_iter().collect(),
-				JsonValue::String(hex::encode(&signature[..]).chars().map(|x| x).collect()),
+				"signature".chars().collect(),
+				JsonValue::String(hex::encode(&signature[..]).chars().collect()),
 			),
 		])
 		.serialize();
@@ -752,6 +749,6 @@ impl<T: Config> Pallet<T> {
 			_ => return Err(http::Error::IoError),
 		};
 
-		Ok(parsed_accounts.try_into().map_err(|_| http::Error::IoError)?)
+		parsed_accounts.try_into().map_err(|_| http::Error::IoError)
 	}
 }

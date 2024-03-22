@@ -1,7 +1,8 @@
 # ISO-8583 Chain
 
+This is a Substrate-based blockchain that implements the ISO-8583 standard for financial transactions. It is a proof of concept that demonstrates a way to implement a custom runtime module that can be used to build a blockchain that integrates with an existing financial system that uses the ISO-8583 standard.
 
-## Introduction
+An integral part of this PoC is the PCIDSS compliant trusted oracle and payment processor server located at [payment-processor](https://github.com/subclone/payment-processor).
 
 ## Run
 
@@ -10,16 +11,32 @@ Make sure you have the necessary environment for Substrate development. If not, 
 ```bash
 cargo build --release
 
-./target/release/iso8583-chain --dev --tmp
+./target/release/iso8583-chain --dev --tmp -loffchain-worker
 ```
 
-### Enable offchain worker
+### Offchain Worker
 
-- Offchain worker runs every 2 seconds by default.
-- To enable offchain worker, you need to insert your keys to the keystore. You can use the following command to insert your keys to the keystore.
+First and foremost, insert the offchain worker key by running this command:
 
 ```bash
-./target/release/iso8583-chain key insert --key-type iso8 --suri "news slush supreme milk chapter athlete soap sausage put clutch what kitten" --scheme sr25519
+curl -H "Content-Type: application/json" \
+ --data '{ "jsonrpc":"2.0", "method":"author_insertKey", "params":["'"iso8"'", "'"news slush supreme milk chapter athlete soap sausage put clutch what kitten"'", "'"0xd2bf4b844dfefd6772a8843e669f943408966a977e3ae2af1dd78e0f55f4df67"'"],"id":1 }' \
+"http://localhost:9944"
 ```
 
 Note that the above private key is used for demo purposes, i.e the trusted oracle and payment processor API expect this key to sign requests from offchain worker.
+
+## Tests, clippy, fmt and coverage
+
+```bash
+# Run check
+cargo check --features runtime-benchmarks
+# Run all tests: unit tests, integration tests, and doc tests
+cargo test --workspace --all-features
+# Run clippy
+cargo clippy --workspace --all-targets --all-features
+# Run fmt
+cargo +nightly fmt --all --check
+# Run code coverage
+cargo tarpaulin --workspace --all-features
+```
