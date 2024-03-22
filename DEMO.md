@@ -1,4 +1,4 @@
-# How to run the demo
+# Demo 
 
 ## Prerequisites
 
