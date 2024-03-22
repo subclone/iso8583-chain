@@ -18,6 +18,10 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y \
+    libssl1.1 \
+    ca-certificates \
+    curl
 # Copy the built substrate node binary from the builder stage
 COPY --from=builder /app/target/release/iso8583-chain /usr/local/bin/
 
