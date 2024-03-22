@@ -40,3 +40,11 @@ cargo +nightly fmt --all --check
 # Run code coverage
 cargo tarpaulin --workspace --all-features
 ```
+
+## Other notes:
+
+This is the high-level overview of components and how they interact:
+
+![iso-8583-overview](https://github.com/subclone/payment-processor/assets/88332432/01c97bed-2ec8-4041-9702-cf079477e9be)
+
+
