@@ -167,6 +167,7 @@ impl ExtBuilder {
 		crate::GenesisConfig::<Test> {
 			oracle_accounts: self.oracle_accounts.clone(),
 			accounts: self.accounts.clone(),
+			payment_processor_url: b"http://localhost:3001".to_vec(),
 		}
 		.assimilate_storage(&mut t)
 		.unwrap();
