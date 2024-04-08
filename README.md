@@ -30,11 +30,17 @@ Docker:
 # Ready to use docker image
 docker run -it -p 9944:9944 kingleard/iso8583-chain --dev --tmp --unsafe-rpc-external --rpc-cors=all --rpc-methods=unsafe -loffchain-worker
 
-# Build docker image
+# Build docker image MacOS (M1)
+docker build --platform linux/x86_64 -t iso8583-chain .
+
+# Build docker image Linux
 docker build -t iso8583-chain .
 
-# Run docker image
-docker run -it -p 9944:9944 iso8583-chain --dev --tmp --unsafe-rpc-external --rpc-cors=all --rpc-methods=unsafe -loffchain-worker
+# Run docker image MacOS (M1)
+docker run --platform=linux/x86_64 -it -p 9944:9944 iso8583-chain:latest --dev --tmp --unsafe-rpc-external --rpc-cors=all --rpc-methods=unsafe -loffchain-worker
+
+# Run docker image Linux
+docker run -it -p 9944:9944 iso8583-chain:latest --dev --tmp --unsafe-rpc-external --rpc-cors=all --rpc-methods=unsafe -loffchain-worker
 ```
 
 ### Offchain Worker
